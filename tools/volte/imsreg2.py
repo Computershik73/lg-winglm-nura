@@ -20,9 +20,9 @@ MTU_SAFE = 1250          # P-CSCF drops fragmented ESP: bigger requests go over 
 
 
 def _setting(name, default):
-    """test knobs: /etc/winglm-volte/expires (requested registration time,
-    MegaFon grants 7200 s, Min-Expires 3600) and /etc/winglm-volte/refresh
-    (seconds between re-REGISTERs instead of half the registration time)"""
+    """test knobs in /etc/winglm-volte/: expires (requested registration
+    time; MegaFon grants 7200 s, Min-Expires 3600) and refresh (seconds
+    between re-REGISTERs instead of half the registration time)"""
     try:
         return int(open('/etc/winglm-volte/' + name).read().strip())
     except (OSError, ValueError):
@@ -119,11 +119,13 @@ class TcpConn:
         self.sock.sendall(data)
         self.sock.setblocking(False)
 
-    def close(self):
+    def close(self, reset=False):
         if self.watch:
             GLib.source_remove(self.watch)
             self.watch = None
         try:
+            if reset:
+                self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
             self.sock.close()
         except OSError:
             pass
@@ -154,7 +156,6 @@ class ImsLink:
         self.watches = []
         self.refresh_src = None
         self.refreshing = False      # a re-REGISTER is outstanding
-        self.next_spis = None
         self.expires = EXPIRES
         self.ipa = None
         self.pdn = None
@@ -186,7 +187,6 @@ class ImsLink:
         self.cseq = 0
         self.pc = random.randint(15000, 32000) * 2 + 1
         self.ps = self.pc + 1
-        self.old_sas = []            # ESP states kept until the new SAs are in use
         self.unprot = self._udp(5060)
         self.udp_pc = self._udp(self.pc)
         self.udp_ps = self._udp(self.ps)
@@ -282,10 +282,9 @@ class ImsLink:
         c = random.randint(0x10000, 0x7FFFFFF0)
         return c, c + 1
 
-    def sec_client(self, spis=None):
-        spi_c, spi_s = spis or (self.spi_c, self.spi_s)
+    def sec_client(self):
         return ', '.join('ipsec-3gpp;alg=hmac-sha-1-96;ealg=%s;prot=esp;mod=trans;spi-c=%d;spi-s=%d;'
-                         'port-c=%d;port-s=%d' % (e, spi_c, spi_s, self.pc, self.ps)
+                         'port-c=%d;port-s=%d' % (e, self.spi_c, self.spi_s, self.pc, self.ps)
                          for e in ('null', 'aes-cbc'))
 
     def contact(self, expires=None):
@@ -317,6 +316,14 @@ class ImsLink:
         self.log('>>> %s (%s %d bytes)' % (msg.first, transport, len(data)))
         if transport == 'TCP':
             self._tcp_send(data)
+            if cb and msg.method != 'ACK':
+                # Timer B/F: no answer at all within 32 s = transaction failed
+                def timeout(key=key):
+                    if key in self.pending and key not in self.answered:
+                        c = self.pending.pop(key)
+                        c(None)
+                    return False
+                GLib.timeout_add_seconds(32, timeout)
         else:
             self.udp_pc.sendto(data, (self.p, self.psp))
             if retrans and msg.method not in ('ACK',):
@@ -396,10 +403,7 @@ class ImsLink:
             self.log('error handling message: %s\n%s' % (e, traceback.format_exc()))
 
     # ------------------------------------------------------------ registration
-    def _register_msg(self, expires, authz, verify, full, spis=None):
-        """spis: SPI pair for Security-Client (every REGISTER after the
-        initial one offers a fresh pair, TS 24.229 5.1.1.4.1, so that the
-        network can re-authenticate)"""
+    def _register_msg(self, expires, authz, verify, full):
         self.cseq += 1
         uri = 'sip:' + self.domain
         m = Msg('REGISTER %s SIP/2.0' % uri)
@@ -417,8 +421,7 @@ class ImsLink:
         if full:
             m.add('Allow', 'INVITE,ACK,CANCEL,BYE,UPDATE,PRACK,MESSAGE,OPTIONS,NOTIFY')
             m.add('P-Access-Network-Info', self.pani)
-        if full or spis:
-            m.add('Security-Client', self.sec_client(spis))
+            m.add('Security-Client', self.sec_client())
         if verify:
             m.add('Security-Verify', verify)
         m.add('Authorization', authz or 'Digest username="%s",realm="%s",uri="%s",nonce="",response=""'
@@ -432,7 +435,6 @@ class ImsLink:
         self.call_id = rnd(16) + '@' + self.ue
         self.ftag = rnd(8)
         self.spi_c, self.spi_s = self._new_spis()
-        self.next_spis = None
         m = self._register_msg(self.expires, None, None, True)
         m.set('Via', 'SIP/2.0/UDP %s:5060;branch=%s;rport' % (self.ue, branch()))
         key = (m.top_branch, 'REGISTER')
@@ -478,7 +480,7 @@ class ImsLink:
         self.res, ck, ik = vals
         self.nc = 1
         best = sorted(offers, key=lambda o: -float(params(o).get('q', '0')))[0]
-        self._ipsec(best, ck, ik, self.spi_c, self.spi_s, fresh=True)
+        self._ipsec(best, ck, ik)
         authz = self._digest('REGISTER', 'sip:' + self.domain)
         m = self._register_msg(self.expires, authz, self.verify, True)
         self.send_request(m, self._on_reg)
@@ -501,11 +503,8 @@ class ImsLink:
             a += ',opaque="%s"' % p['opaque']
         return a
 
-    def _ipsec(self, srv, ck, ik, spi_c, spi_s, fresh):
-        """SAs for (our spi_c/spi_s, the P-CSCF's offer srv).  fresh: replace
-        everything (initial registration); otherwise (re-authentication) the
-        new SAs are added next to the old ones, the outbound policies switch
-        to the new SAs and the old states are deleted once registered"""
+    def _ipsec(self, srv, ck, ik):
+        """SAs for our spi_c/spi_s and the P-CSCF's offer srv (replaces all)"""
         s = params(srv)
         alg, ealg = s['alg'], s.get('ealg', 'null')
         spi_cp, spi_sp = int(s['spi-c']), int(s['spi-s'])
@@ -517,14 +516,13 @@ class ImsLink:
             auth = "auth-trunc 'hmac(md5)' 0x%s 96" % ik.hex()
         enc = "enc 'cbc(aes)' 0x%s" % ck.hex() if ealg == 'aes-cbc' else "enc 'ecb(cipher_null)' ''"
         U, P = self.ue, self.p
-        states = ((U, P, spi_sp), (U, P, spi_cp), (P, U, spi_c), (P, U, spi_s))
-        if fresh:
-            run('ip xfrm policy flush; ip xfrm state flush')
-            self.old_sas = []
-        else:
-            run('ip xfrm policy flush')
+        # TCP connections belong to the old SAs: reset them (no TIME_WAIT, so
+        # the protected client port can connect again right away)
+        for c in list(self.tcp_conns):
+            c.close(reset=True)
+        run('ip xfrm policy flush; ip xfrm state flush')
         cmds = ['ip xfrm state add src %s dst %s proto esp spi %d mode transport %s %s' % (a, b, spi, auth, enc)
-                for a, b, spi in states]
+                for a, b, spi in ((U, P, spi_sp), (U, P, spi_cp), (P, U, self.spi_c), (P, U, self.spi_s))]
         for proto in ('udp', 'tcp'):
             cmds += ['ip xfrm policy add src %s/32 dst %s/32 sport %d dport %d proto %s dir out '
                      'tmpl src %s dst %s proto esp spi %d mode transport' % (U, P, sp, dp, proto, U, P, spi)
@@ -533,22 +531,8 @@ class ImsLink:
             r = run(c)
             if r.returncode:
                 raise RuntimeError('xfrm: %s' % (r.stdout + r.stderr).strip())
-        if not fresh:
-            self.old_sas = list(getattr(self, 'cur_sas', []))
-            if old_psp != self.psp and self.tcp_client:
-                self.tcp_client.close()          # reconnect to the new protected port
-        self.cur_sas = list(states)
-        self.spi_c, self.spi_s = spi_c, spi_s
         self.log('IPsec: %s/%s, P-CSCF ports %d/%d%s' % (alg, ealg, self.pcp, self.psp,
-                                                        '' if fresh else ' (re-authenticated)'))
-
-    def _drop_old_sas(self):
-        for a, b, spi in self.old_sas:
-            run('ip xfrm state delete src %s dst %s proto esp spi %d' % (a, b, spi))
-        if self.old_sas:
-            self.log('IPsec: old SAs removed')
-        self.old_sas = []
-        return False
+                                                        '' if old_psp in (None, self.psp) else ' (was %d)' % old_psp))
 
     def _on_reg(self, r):
         if getattr(self, 'reg_stopping', False):
@@ -560,7 +544,8 @@ class ImsLink:
             return
         if r.code == 401:
             if self.refreshing:
-                self._reauth(r)
+                # the network re-authenticates (MegaFon: every 2 h)
+                self._rechallenge(r)
                 return
             self.reg_failures += 1
             if self.reg_failures > 3:
@@ -570,16 +555,11 @@ class ImsLink:
             self.register_initial()
             return
         if r.code != 200:
-            if self.refreshing:
-                self._reregister('re-REGISTER answered %d' % r.code)
-            else:
-                self.down('REGISTER failed %d' % r.code)
+            self.down('REGISTER failed %d' % r.code)
             return
         self.reg_failures = 0
         self.refreshing = False
-        self.reauths = 0
-        if self.old_sas:
-            GLib.timeout_add_seconds(30, self._drop_old_sas)
+        self.rechallenges = 0
         exp = 3600
         for c in r.getall('Contact'):
             m = re.search(r'expires=(\d+)', c)
@@ -601,57 +581,46 @@ class ImsLink:
             cb(True)
 
     def _refresh(self):
-        """re-REGISTER inside the current SAs, offering a new SPI pair in
-        case the network re-authenticates (401)"""
+        """re-REGISTER inside the current SAs: small, over UDP, no
+        Security-Client.  (MegaFon's P-CSCF does not answer a re-REGISTER that
+        offers new SPIs, nor an unprotected REGISTER while SAs exist.)"""
         self.refresh_src = None
         self.refreshing = True
-        self.next_spis = self._new_spis()
         try:
-            authz = self._digest('REGISTER', 'sip:' + self.domain)
-            m = self._register_msg(self.expires, authz, self.verify, False, spis=self.next_spis)
-            self.send_request(m, self._on_reg)
+            self._send_register(self.expires, self._on_reg)
         except Exception as e:
-            self._reregister('re-REGISTER not sent: %s' % e)
+            self.down('re-REGISTER not sent: %s' % e)
         return False
 
-    def _reauth(self, r):
-        """401 to a re-REGISTER (TS 33.203 7.4): run AKA again, set up new SAs
-        with the SPIs offered in the re-REGISTER and send the authenticated
-        REGISTER over them; the old SAs go once that is answered 200"""
-        self.reauths = getattr(self, 'reauths', 0) + 1
-        if self.reauths > 2:
-            self._reregister('repeated 401 to re-REGISTER')
+    def _rechallenge(self, r):
+        """401 to a re-REGISTER: answer the new AKA challenge inside the same
+        registration (same Call-ID, next CSeq).  New SAs only if the 401
+        offers them (Security-Server); otherwise the current SAs stay.
+        (Answering with a new unprotected registration got 400.)"""
+        self.rechallenges = getattr(self, 'rechallenges', 0) + 1
+        if self.rechallenges > 2:
+            self.down('repeated 401 to re-REGISTER')
             return
-        srv = r.getall('Security-Server')
         offers = []
-        for line in srv:
+        for line in r.getall('Security-Server'):
             offers += [o.strip() for o in line.split(',') if o.strip()]
-        if not offers or not self.next_spis:
-            self._reregister('401 to re-REGISTER without Security-Server')
-            return
+        self.log('re-REGISTER challenged (re-authentication, %s)'
+                 % ('new SAs offered' if offers else 'no Security-Server'))
         self.chal = r.get('WWW-Authenticate')
         nonce = base64.b64decode(params(self.chal)['nonce'])
         kind, vals = self.isim.authenticate(nonce[:16], nonce[16:32])
         if kind != 'ok':
-            self._reregister('ISIM synchronisation failure on re-authentication')
+            self.down('ISIM synchronisation failure on re-authentication')
             return
         self.res, ck, ik = vals
         self.nc = 1
-        self.verify = ', '.join(offers)
-        best = sorted(offers, key=lambda o: -float(params(o).get('q', '0')))[0]
-        self.log('network re-authenticates the registration')
-        self._ipsec(best, ck, ik, self.next_spis[0], self.next_spis[1], fresh=False)
+        if offers:
+            self.verify = ', '.join(offers)
+            best = sorted(offers, key=lambda o: -float(params(o).get('q', '0')))[0]
+            self._ipsec(best, ck, ik)
         authz = self._digest('REGISTER', 'sip:' + self.domain)
-        m = self._register_msg(self.expires, authz, self.verify, False, spis=(self.spi_c, self.spi_s))
+        m = self._register_msg(self.expires, authz, self.verify, bool(offers))
         self.send_request(m, self._on_reg)
-
-    def _reregister(self, why):
-        """the refresh failed: register again (new Call-ID and SPIs) without
-        taking the PDN down; if that fails too the link goes down"""
-        self.log('%s: new registration' % why)
-        self.refreshing = False
-        self.reauths = 0
-        self.register_initial()
 
     def _send_register(self, expires, cb):
         authz = self._digest('REGISTER', 'sip:' + self.domain)
