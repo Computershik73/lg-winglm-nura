@@ -56,7 +56,9 @@ cat "$KMS_CONFIG"
 
 unset WAYLAND_DISPLAY DISPLAY
 export XDG_SESSION_TYPE=wayland
-export XDG_CURRENT_DESKTOP=Voce
+# ":GNOME" like Phosh (Phosh:GNOME): GNOME Settings and other GNOME apps
+# refuse to run or drop features outside GNOME
+export XDG_CURRENT_DESKTOP=Voce:GNOME
 export XDG_SESSION_DESKTOP=voce
 export QT_QPA_PLATFORM=eglfs
 export QT_QPA_EGLFS_INTEGRATION=eglfs_kms
@@ -68,6 +70,9 @@ export WMS_BACKLIGHT_DIR="/sys/class/backlight/$BACKLIGHT"
 # The swivel panel has ~420 ppi; the shell's pixel-sized screens (lock
 # screen, cards, app grid, window list) were drawn for a 720x720 window
 export WMS_UI_SCALE="${WMS_UI_SCALE:-2.5}"
+# Apps see an output scale of 3, as under Phosh: 360x413 logical pixels, so
+# GTK/libadwaita apps use their mobile layouts
+export WMS_CLIENT_SCALE="${WMS_CLIENT_SCALE:-3}"
 # Qt's libraries carry RUNPATH=$ORIGIN (/usr/lib), which musl searches before
 # /etc/ld-musl-aarch64.path: without this Qt would load Alpine's EGL/GBM
 # instead of the KGSL Mesa (mesa-kgsl) that phoc and the apps use.

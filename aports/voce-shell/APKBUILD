@@ -16,8 +16,8 @@
 # different gzip bytes: run "abuild checksum" then.)
 pkgname=voce-shell
 pkgver=0.2_git20261121
-pkgrel=1
-_commit=91f212bb4aafcdde04b903dde3f793083b3704c8
+pkgrel=2
+_commit=326e6337e82726f50fac3bab7a5b95785c70eb30
 pkgdesc="Voce mobile shell (Qt 6 Wayland compositor) as a session on the LG Wing swivel screen"
 url="https://github.com/VoceOS/voce-shell"
 arch="aarch64"
@@ -75,7 +75,7 @@ package() {
 }
 
 sha512sums="
-af4302cad6995e18cd0809e27439de14e695d2ef7801cae0d3acd83739c6182b7ed619e7cefdbf8950f85c447bd1fd232f23a59273fc942e4efe94376086eefc  voce-shell-91f212bb4aafcdde04b903dde3f793083b3704c8.tar.gz
-c600e6287d56bec2f9f2915f5c98ec1c7895d0e981a9042d29a40c2ccca17de700aa9d19f705b42b528a033c82b69171186087fdfd32e0ae3e98178951fd705d  voce-shell-session
+3986dfc519c6ab7a75007127671537996d8e8f45fc989e34374ccac270d6c93e907139abce43f8fc40480aadb4ed1587740e0fdf74776416ee7c8990b7133a6f  voce-shell-326e6337e82726f50fac3bab7a5b95785c70eb30.tar.gz
+1a05b94160c42dc58724bc490ee5aa5d4b448aa17566865f813591ffe5420f43972ff20252061280a11bc4fad4f39ee93d484175b17c4d09ffe212d37c320ecf  voce-shell-session
 2f9626d88965ab6b7a73965f93498fa13addd3faf7f0c387e199415f1e62fff2e6a83f535d8ac99ad0a6705107de701a0bccfc7759e473ceef8460cdc9a3beeb  voce.desktop
 "

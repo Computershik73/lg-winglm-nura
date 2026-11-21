@@ -79,7 +79,13 @@ phrog lists the session as **Voce** (`/usr/share/wayland-sessions/voce.desktop`,
   only): the lock screen, home cards, app grid and window list are sized in
   pixels for a 720x720 window and were tiny on the ~420 ppi panel; the parts
   from the Figma mockup (status bar, shade, call screen) follow the width and
-  keep their designed size, apps stay at native resolution;
+  keep their designed size (the status bar is drawn 1.5x the mockup, the
+  shade has bigger labels, toggles and slider knobs), apps stay at native
+  resolution;
+* sets `WMS_CLIENT_SCALE=3`: apps see an output scale of 3 like under Phosh
+  and get a maximized 360x413 logical window, so GTK/libadwaita apps use
+  their mobile layouts; `XDG_CURRENT_DESKTOP=Voce:GNOME` (GNOME Settings
+  refuses to start outside GNOME);
 * logs to `~/.cache/voce-shell/session.log`; `~/.config/voce-shell/env` is
   sourced first for tests (`VOCE_OUTPUT`, `VOCE_SHELL`, `WMS_UI_SCALE`, Qt
   variables).
@@ -109,7 +115,7 @@ logs into Voce once without the greeter (`... 'sh -s phosh'` back to Phosh).
 | Brightness slider (shade) | ✅ panel1 through logind (untested by hand) |
 | Battery level (UPower) | ✅ |
 | Lock screen | ⚠️ swipe only, no PIN |
-| Apps from the grid | ⚠️ software rendering only (see GPU above) |
+| Apps from the grid | ⚠️ software rendering only (see GPU above); mobile layouts at scale 3, dialogs, closed windows leave the window list |
 | Volume slider | ❌ uses `wpctl` (PipeWire); the phone uses PulseAudio, and no audio server is started in the session |
 | Calls | ❌ `voce-dialer`/`CallWatcher` only know ModemManager (CS); VoLTE goes through `winglm-volte` + GNOME Calls (SIP), not started here; no callaudiod/feedbackd/PulseAudio |
 | Notifications | ❔ the server runs; untested |
