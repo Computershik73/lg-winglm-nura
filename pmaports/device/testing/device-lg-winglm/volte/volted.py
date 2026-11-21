@@ -199,7 +199,7 @@ class Manager:
         self.ims.handler = self
         self.ims.on_down = self._ims_down
         try:
-            if not os.path.exists('/run/winglm-ipa-ready'):
+            if not os.path.exists('/run/rmnet-ipa-data-format'):
                 self.guard(True)
                 GLib.timeout_add_seconds(180, lambda: self.guard(False) and False)
             self.ims.start()

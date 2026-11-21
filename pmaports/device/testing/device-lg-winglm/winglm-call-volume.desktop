@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=LG Wing: volume keys during calls
+Exec=/usr/libexec/winglm-call-volume
+NoDisplay=true
+X-GNOME-Autostart-Phase=Applications
+X-GNOME-AutoRestart=true

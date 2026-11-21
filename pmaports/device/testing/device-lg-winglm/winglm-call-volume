@@ -1,0 +1,109 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""winglm-call-volume: volume keys during calls (LG Wing).
+
+Call audio runs in the DSP voice path, not through PulseAudio, so the volume
+keys (which change the PulseAudio sink volume) did nothing in a call. While
+the sound card is in a "Voice Call" profile, mirror the default sink's
+volume to the codec's digital gain of the earpiece/headset path and go back
+to 0 dB after the call. The speakerphone (TFA amplifier) is not covered.
+
+Needs linux-lg-winglm r7: older kernels refuse these controls above -44 dB
+(the writes then simply fail, nothing changes).
+"""
+import math
+import re
+import subprocess
+import sys
+import time
+
+CONTROLS = ('RX_RX0 Digital Volume', 'RX_RX1 Digital Volume')
+ZERO_DB = 84        # raw value of 0 dB: the controls go from -84 to +40 dB
+MAX_DB = 6          # at 100 %
+MIN_DB = -40        # at the bottom of the scale (not muted)
+EVENT = re.compile(r"on (sink|card) #|on server$")
+
+
+def log(msg):
+    print('winglm-call-volume: ' + msg, file=sys.stderr, flush=True)
+
+
+def pactl(*args):
+    r = subprocess.run(('pactl',) + args, capture_output=True, text=True)
+    return r.stdout if r.returncode == 0 else ''
+
+
+def in_call():
+    for line in pactl('list', 'cards').splitlines():
+        line = line.strip().lower()
+        if line.startswith('active profile:') and ('voice call' in line or 'voicecall' in line):
+            return True
+    return False
+
+
+def sink_percent():
+    out = pactl('get-sink-volume', '@DEFAULT_SINK@')
+    vals = [int(v) for v in re.findall(r'(\d+)%', out)]
+    if not vals:
+        return None
+    if 'yes' in pactl('get-sink-mute', '@DEFAULT_SINK@'):
+        return 0
+    return sum(vals) / len(vals)
+
+
+def gain(pct):
+    """PulseAudio's cubic volume curve, shifted so that 100 % is MAX_DB"""
+    if pct <= 0:
+        db = MIN_DB
+    else:
+        db = MAX_DB + 60 * math.log10(min(pct, 100) / 100)
+    return ZERO_DB + max(MIN_DB, min(MAX_DB, round(db)))
+
+
+class Volume:
+    def __init__(self):
+        self.value = None
+
+    def set(self, value):
+        if value == self.value:
+            return
+        ok = True
+        for c in CONTROLS:
+            r = subprocess.run(('amixer', '-q', '-c', '0', 'cset', 'name=' + c, str(value)),
+                               capture_output=True, text=True)
+            if r.returncode:
+                ok = False
+                log('%s = %d refused: %s' % (c, value, r.stderr.strip()))
+        if ok:
+            log('earpiece/headset gain %+d dB' % (value - ZERO_DB))
+        # don't retry a refused value on every event
+        self.value = value
+
+    def update(self):
+        if in_call():
+            pct = sink_percent()
+            if pct is not None:
+                self.set(gain(pct))
+        elif self.value is not None and self.value != ZERO_DB:
+            self.set(ZERO_DB)
+
+
+def main():
+    vol = Volume()
+    while True:
+        vol.update()
+        p = subprocess.Popen(('pactl', 'subscribe'), stdout=subprocess.PIPE, text=True)
+        for line in p.stdout:
+            # sinks, cards and the default sink; not the busy sink inputs
+            if EVENT.search(line):
+                vol.update()
+        p.wait()
+        # PulseAudio went away (restart): try again shortly
+        time.sleep(2)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except KeyboardInterrupt:
+        pass

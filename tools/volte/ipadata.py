@@ -22,7 +22,8 @@ ADD_MUX_CHANNEL, SET_EGRESS, SET_INGRESS, GET_EP_PAIR = 0x05, 0x06, 0x07, 0x10
 EG_MAP, EG_MUX = 1 << 1, 1 << 3
 IN_MAP, IN_DEAGG, IN_DEMUX, IN_CSUM, IN_AGG = 1 << 1, 1 << 2, 1 << 3, 1 << 4, 1 << 5
 EP = struct.pack('<II', 4, 1)          # embedded, interface 1
-STATE = '/run/winglm-ipa-ready'
+# shared with ModemManager (downstream IPA patch): formats set this boot
+STATE = '/run/rmnet-ipa-data-format'
 
 
 def run(cmd, check=False):

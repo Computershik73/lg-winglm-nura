@@ -1,0 +1,11 @@
+--- a/src/freedreno/vulkan/tu_knl_kgsl.cc	2026-11-21 10:34:27.145292793 +0400
++++ b/src/freedreno/vulkan/tu_knl_kgsl.cc	2026-11-21 10:34:27.153292791 +0400
+@@ -1898,7 +1898,7 @@
+ VkResult
+ tu_knl_kgsl_load(struct tu_instance *instance, int fd)
+ {
+-   if (instance->vk.enabled_extensions.KHR_display) {
++   if (false && instance->vk.enabled_extensions.KHR_display) { /* winglm: KHR_display just unusable on kgsl, not fatal */
+       return vk_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
+                        "I can't KHR_display");
+    }

@@ -1,0 +1,42 @@
+From: winglm port
+Subject: [PATCH] ASoC: ops: don't modify the driver's platform_max when reading state
+
+snd_soc_info_volsw() stored mc->max into mc->platform_max the first time a
+control's info was read. For _sx controls max is the top of the signed
+range (40 for the WCD/bolero digital gains declared with -84, 40), so after
+the first info call (amixer, PulseAudio) snd_soc_put_volsw_sx() rejected
+every value above 40 through its platform_max check: 0 dB (84) and up could
+never be set, even with the bounds fix of patch 0005. Backport of upstream
+9bdd10d57a88 ("ASoC: ops: Don't modify the driver's plaform_max when
+reading state").
+---
+--- a/sound/soc/soc-ops.c
++++ b/sound/soc/soc-ops.c
+@@ -185,9 +185,10 @@
+ 		(struct soc_mixer_control *)kcontrol->private_value;
+ 	int platform_max;
+
+-	if (!mc->platform_max)
+-		mc->platform_max = mc->max;
+-	platform_max = mc->platform_max;
++	if (mc->platform_max)
++		platform_max = mc->platform_max;
++	else
++		platform_max = mc->max;
+
+ 	if (platform_max == 1 && !strstr(kcontrol->id.name, " Volume"))
+ 		uinfo->type = SNDRV_CTL_ELEM_TYPE_BOOLEAN;
+@@ -495,9 +496,10 @@
+ 	int platform_max;
+ 	int min = mc->min;
+
+-	if (!mc->platform_max)
+-		mc->platform_max = mc->max;
+-	platform_max = mc->platform_max;
++	if (mc->platform_max)
++		platform_max = mc->platform_max;
++	else
++		platform_max = mc->max;
+
+ 	uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
+ 	uinfo->count = snd_soc_volsw_is_stereo(mc) ? 2 : 1;
