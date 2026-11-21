@@ -127,7 +127,7 @@ logs into Voce once without the greeter (`... 'sh -s phosh'` back to Phosh).
 | Brightness slider (shade) | ✅ panel1 through logind, asynchronous; the value is kept in `~/.config/voce-shell/shell.ini` and applied at start |
 | Battery level (UPower) | ✅ |
 | Lock screen | ⚠️ swipe only, no PIN |
-| Apps from the grid | ⚠️ software rendering only (see GPU above); mobile layouts at scale 3, dialogs, closed windows leave the window list |
+| Apps from the grid | ⚠️ software rendering only (see GPU above); mobile layouts at scale 3, dialogs, closed windows leave the window list; touches mapped to the surface (QtWayland sends them unmapped, `VoceShellSurfaceItem` fixes it) |
 | Volume slider | ❌ uses `wpctl` (PipeWire); the phone uses PulseAudio, and no audio server is started in the session |
 | Calls | ❌ `voce-dialer`/`CallWatcher` only know ModemManager (CS); VoLTE goes through `winglm-volte` + GNOME Calls (SIP), not started here; no callaudiod/feedbackd/PulseAudio |
 | GNOME Settings | ✅ mobile layout, dark style, no window buttons; Displays page: scale 100–400 % and orientation (0/90/180/270°) applied live and saved (the shell implements `org.gnome.Mutter.DisplayConfig` like Phosh); Night Light not supported |
