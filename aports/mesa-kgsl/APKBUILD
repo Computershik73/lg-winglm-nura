@@ -1,0 +1,129 @@
+# Maintainer: Computershik73 <il.mohoff2016@yandex.ru>
+# Mesa with the Qualcomm KGSL kernel-mode backend for the LG Wing (downstream
+# 4.19 kernel: the GPU is /dev/kgsl-3d0, not a DRM render node).
+#   Vulkan : turnip on KGSL
+#   GL/GLES: freedreno gallium on KGSL, zink on top of turnip
+# Installed into its own library directory (/usr/lib/mesa-kgsl);
+# /etc/ld-musl-aarch64.path puts it in front of /usr/lib, so every program
+# uses it instead of Alpine's Mesa, which stays installed for everything
+# that depends on it.
+#
+# Same version as Alpine's Mesa when it was built, but with the full set of
+# client libraries (GLX, GLES1 too): with the prefix first in the library
+# path, libEGL/libGL/libGLES*/libgbm all have to come from this build
+# (Alpine's libGL against this libgallium fails with loader_dri3_* symbol
+# errors).
+pkgname=mesa-kgsl
+pkgver=26.3.0
+pkgrel=1
+pkgdesc="Mesa with the KGSL backend (freedreno, turnip, zink) for Qualcomm downstream kernels"
+url="https://www.mesa3d.org"
+arch="aarch64"
+license="MIT AND SGI-B-2.0 AND BSL-1.0"
+# no automatic so: dependencies/provides: they would tie this package to
+# Alpine's libgallium/libgbm of the same names (and block upgrading them)
+options="!check !tracedeps"
+depends="
+	so:libX11-xcb.so.1
+	so:libX11.so.6
+	so:libXext.so.6
+	so:libXxf86vm.so.1
+	so:libdisplay-info.so.3
+	so:libdrm.so.2
+	so:libexpat.so.1
+	so:libgcc_s.so.1
+	so:libstdc++.so.6
+	so:libudev.so.1
+	so:libwayland-client.so.0
+	so:libxcb-dri3.so.0
+	so:libxcb-glx.so.0
+	so:libxcb-present.so.0
+	so:libxcb-randr.so.0
+	so:libxcb-shm.so.0
+	so:libxcb-sync.so.1
+	so:libxcb-xfixes.so.0
+	so:libxcb.so.1
+	so:libxshmfence.so.1
+	so:libz.so.1
+	so:libzstd.so.1
+	"
+makedepends="
+	bison
+	expat-dev
+	flex
+	glslang
+	libdrm-dev
+	libx11-dev
+	libxcb-dev
+	libxext-dev
+	libxfixes-dev
+	libxrandr-dev
+	libxshmfence-dev
+	libxxf86vm-dev
+	meson
+	py3-mako
+	py3-yaml
+	python3
+	wayland-dev
+	wayland-protocols
+	zstd-dev
+	"
+_libdir=/usr/lib/mesa-kgsl
+source="https://archive.mesa3d.org/mesa-$pkgver.tar.xz
+	0001-turnip-kgsl-do-not-fail-on-KHR_display.patch
+	ld-musl-aarch64.path
+	"
+builddir="$srcdir/mesa-$pkgver"
+
+build() {
+	# like Alpine's Mesa: -O2 instead of the default -Os
+	export CFLAGS="$CFLAGS -O2"
+	export CXXFLAGS="$CXXFLAGS -O2"
+	abuild-meson \
+		--libdir=lib/mesa-kgsl \
+		--datadir=share/mesa-kgsl \
+		--includedir=include/mesa-kgsl \
+		-Db_ndebug=true \
+		-Dplatforms=x11,wayland \
+		-Dgallium-drivers=freedreno,zink \
+		-Dvulkan-drivers=freedreno \
+		-Dfreedreno-kmds=kgsl,msm \
+		-Dllvm=disabled \
+		-Dglx=dri \
+		-Dgbm=enabled \
+		-Degl=enabled \
+		-Dgles1=enabled \
+		-Dgles2=enabled \
+		-Dopengl=true \
+		-Dvideo-codecs= \
+		-Dgallium-va=disabled \
+		-Dgallium-rusticl=false \
+		-Dvulkan-layers= \
+		-Dtools= \
+		-Dbuild-tests=false \
+		-Dvalgrind=disabled \
+		-Dlibunwind=disabled \
+		-Dlmsensors=disabled \
+		-Dzstd=enabled \
+		-Dexpat=enabled \
+		. output
+	meson compile -C output
+}
+
+package() {
+	DESTDIR="$pkgdir" meson install --no-rebuild -C output
+	# headers and pkg-config files would only confuse builds against
+	# Alpine's Mesa
+	rm -rf "$pkgdir"/usr/include "$pkgdir$_libdir"/pkgconfig
+	install -Dm644 "$srcdir"/ld-musl-aarch64.path "$pkgdir"/etc/ld-musl-aarch64.path
+	# the Vulkan loader only looks in the standard ICD directories
+	mkdir -p "$pkgdir"/usr/share/vulkan/icd.d
+	sed "s|\"library_path\": \".*\"|\"library_path\": \"$_libdir/libvulkan_freedreno.so\"|" \
+		"$pkgdir"/usr/share/mesa-kgsl/vulkan/icd.d/freedreno_icd.aarch64.json \
+		> "$pkgdir"/usr/share/vulkan/icd.d/freedreno_kgsl_icd.aarch64.json
+}
+sha512sums="
+b4abd266ecaf813ef078a0461bcdf7c03d2ecddeb5b6e1c51054fb0afe0d830c0f27fc78f0effe68df5ea7b48f76f4e6ca36ed9afe98513f0e4bf8e0bbbe96dd  mesa-26.3.0.tar.xz
+9f9d54f4ccb4fbed2328dfec9aada085667b4475e74256f964ac3469bddbbd8238e5daa3a1fc5c3d02fc77faa1fbe0c5f0d732d2f6840daa28e4b5d92806e1a2  0001-turnip-kgsl-do-not-fail-on-KHR_display.patch
+6ec66541e1c5607a4bdb41472d84ef10279a89fe04c756a6a40734c1464807ab389814d5886f551ca38714a900334fc2aa20986f585bec0e3869aded2a6e47f4  ld-musl-aarch64.path
+"

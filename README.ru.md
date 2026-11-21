@@ -29,6 +29,7 @@
 | Звук: динамик, разговорный динамик, микрофон | ✅ |
 | Проводная гарнитура | ❔ маршруты есть, не проверено |
 | Модем, SIM, регистрация в LTE (ModemManager) | ✅ |
+| Мобильный интернет (LTE, IPv4 + IPv6) через NetworkManager / переключатель Phosh | ✅ (форк ModemManager для IPA-драйвера из Android) |
 | SMS, USSD | ❔ не проверено |
 | Звонки 2G/3G | ✅ |
 | VoLTE (исходящие и входящие, AMR/AMR-WB), звук в DSP модема | ✅ (свой IMS-клиент, см. [docs/volte.md](docs/volte.md)) |
@@ -43,9 +44,11 @@
 Актуальное состояние — в issues; на момент написания:
 
 * Сон (s2idle) — на этом ядре пока не работает.
-* Мобильный интернет — канал данных работает (используется для IMS), но
-  NetworkManager/ModemManager им пока не управляют.
-* Громкость в звонке — нужно ядро r6 (`linux-lg-winglm`, патч 0005).
+* Громкость в звонке — нужно ядро r8 (`linux-lg-winglm`, патчи 0005/0006;
+  на тестовом телефоне r8 ещё не прошито). Помощник сеанса
+  `winglm-call-volume` переводит кнопки громкости в усиление разговорного
+  динамика/гарнитуры; громкая связь не охвачена.
+* VoLTE одновременно с мобильным интернетом — пока не проверено.
 * Калибровка звука ACDB (настройки эхоподавления и шумоподавления из Android)
   не загружается.
 * Камеры и сканер отпечатков (Qualcomm CamX / TEE) — не планируются.
@@ -59,8 +62,9 @@ pmaports/device/testing/device-lg-winglm   пакет устройства и п
     -volte   демон IMS/VoLTE (winglm-volte) и его аккаунт в GNOME Calls
 pmaports/device/testing/linux-lg-winglm    ядро (LineageOS 4.19 + патчи)
 aports/<пакет>    форки пакетов Alpine с патчами для Wing (phosh, phoc,
-                  stevia, calls, glib, callaudiod, qrtr, qrtr-ns, pd-mapper,
-                  tqftpserv), собираются на самом телефоне через abuild
+                  stevia, calls, glib, callaudiod, modemmanager, qrtr,
+                  qrtr-ns, pd-mapper, tqftpserv) и mesa-kgsl, собираются на
+                  самом телефоне через abuild
 docs/             технические заметки (VoLTE / IMS / звук в модеме, железо)
 tools/            скрипты запуска, отладки и прототипы
 ```
@@ -96,9 +100,19 @@ sudo apk add ~/.local/share/abuild/aports/aarch64/<пакет>-*.apk
 
 ### Графика (Mesa с KGSL)
 
-В Mesa из Alpine нет поддержки KGSL. `tools/mesa/build-mesa-kgsl.sh` собирает
-ту же версию Mesa на телефоне в `/opt/mesa-kgsl` (turnip и freedreno на KGSL,
-zink для GL).
+В Mesa из Alpine нет поддержки KGSL. `aports/mesa-kgsl` собирает ту же версию
+Mesa с ней (turnip и freedreno на KGSL, zink для GL) в `/usr/lib/mesa-kgsl`;
+его `/etc/ld-musl-aarch64.path` ставит этот каталог перед `/usr/lib`, а файл
+ICD Vulkan указывает на его turnip. Mesa из Alpine остаётся установленной для
+всего, что от неё зависит.
+
+### Мобильный интернет (форк ModemManager)
+
+Порт данных модема создаёт IPA-драйвер из Android (`rmnet_ipa0`, виртуальное
+сетевое устройство, настраиваемое через ioctl драйвера). `aports/modemmanager`
+добавляет его поддержку (патч 0100, создаётся скриптами из `tools/mm-patch/`),
+правила udev из пакета устройства включают её. Дальше подключение мобильной
+сети в NetworkManager работает как обычно (Wi-Fi остаётся основным маршрутом).
 
 ## Установка
 
