@@ -1,0 +1,62 @@
+# Contributor: Bart Ribbers <bribbers@disroot.org>
+maintainer="team/gnome <achill@achill.org>"
+pkgname=calls
+pkgver=51.1
+pkgrel=2
+pkgdesc="Phone dialer and call handler"
+arch="all"
+url="https://gitlab.gnome.org/GNOME/calls"
+license="GPL-3.0-or-later"
+depends="
+	callaudiod
+	modemmanager
+	sofia-sip-linphone
+	"
+makedepends="
+	callaudiod-dev
+	desktop-file-utils
+	evolution-data-server-dev
+	feedbackd-dev
+	folks-dev
+	gettext-dev
+	gmobile-dev
+	gobject-introspection-dev
+	gom-dev
+	gsound-dev
+	gstreamer-dev
+	gtk4.0-dev
+	libadwaita-dev
+	libpeas2-dev
+	meson
+	modemmanager-dev
+	ninja
+	py3-docutils
+	sofia-sip-linphone-dev
+	vala
+	"
+subpackages="$pkgname-doc $pkgname-dbg $pkgname-lang $pkgname-systemd"
+source="https://download.gnome.org/sources/calls/${pkgver%%.*}/calls-$pkgver.tar.xz
+	0001-dial-pad-window-on-a-second-screen.patch
+	"
+options="!check" # Requires running Wayland compositor
+
+build() {
+	abuild-meson \
+		-Db_lto=true \
+		-Dtests="$(want_check && echo true || echo false)" \
+		. output
+	meson compile -C output
+}
+
+check() {
+	meson test --print-errorlogs -C output
+}
+
+package() {
+	DESTDIR="$pkgdir" meson install --no-rebuild -C output
+}
+
+sha512sums="
+a3a4c3bc23a073f519142dae7e5dceb73a04340aab34fe3a6a78c25a1e07247d25008e370f380bc765ef8c67b4a21f5e4906b80b92c04006a55da84ae5c42445  calls-51.1.tar.xz
+7436737e7ce59a04aaf4dca5077d3b8fc2fd46d0ad0f66111ea83dbe1aa7059bbd4d642379456177f5f5619e0b1b85f5dd7be8a561a290d2c21ae063f20cd31f  0001-dial-pad-window-on-a-second-screen.patch
+"

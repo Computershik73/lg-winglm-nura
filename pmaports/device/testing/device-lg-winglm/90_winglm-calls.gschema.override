@@ -1,0 +1,4 @@
+# GNOME Calls with the winglm patch (aports/calls): the dial pad gets a
+# fullscreen window of its own on the swivel screen while it is on
+[org.gnome.Calls]
+dialpad-monitor='DSI-2'

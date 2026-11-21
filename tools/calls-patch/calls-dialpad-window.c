@@ -1,0 +1,502 @@
+/*
+ * Copyright (C) 2026 LG Wing postmarketOS port
+ *
+ * This file is part of Calls.
+ *
+ * Calls is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+/*
+ * A dial pad of its own on a second screen (e.g. the LG Wing's swivel
+ * screen): while Calls is in front and the monitor named in the
+ * "dialpad-monitor" setting is connected, a fullscreen window on it holds
+ * the dial pad, and the main window drops its Dial Pad page. During a call
+ * the same window is a DTMF keypad for the active call.
+ */
+
+#define G_LOG_DOMAIN "CallsDialpadWindow"
+
+#include "calls-dialpad-window.h"
+#include "calls-main-window.h"
+#include "calls-manager.h"
+
+#include <adwaita.h>
+#include <call-ui.h>
+#include <glib/gi18n.h>
+
+#define UPDATE_DELAY_MS 250
+
+struct _CallsDialpadWindow {
+  AdwWindow        parent_instance;
+
+  GtkWindow       *main_window;
+  GtkWindow       *call_window;
+  GSettings       *settings;
+  GListModel      *monitors;
+  GdkMonitor      *monitor;     /* where we are shown, NULL when hidden */
+
+  GtkStack        *stack;
+  GtkEntry        *number_entry;
+  GtkWidget       *dial_button;
+  GtkEntry        *dtmf_entry;
+  GtkLabel        *dtmf_title;
+
+  GPtrArray       *calls;       /* CuiCall */
+  guint            update_id;
+};
+
+G_DEFINE_TYPE (CallsDialpadWindow, calls_dialpad_window, ADW_TYPE_WINDOW)
+
+
+static GdkMonitor *
+find_monitor (CallsDialpadWindow *self)
+{
+  g_autofree char *want = g_settings_get_string (self->settings, "dialpad-monitor");
+  guint n = g_list_model_get_n_items (self->monitors);
+
+  if (!want || !*want || n < 2)
+    return NULL;
+
+  for (guint i = 0; i < n; i++) {
+    g_autoptr (GdkMonitor) monitor = g_list_model_get_item (self->monitors, i);
+
+    if (g_strcmp0 (gdk_monitor_get_connector (monitor), want) == 0)
+      return monitor;
+  }
+
+  return NULL;
+}
+
+
+static gboolean
+on_monitor (GtkWindow *window, GdkMonitor *monitor)
+{
+  GdkSurface *surface;
+
+  if (!gtk_widget_get_mapped (GTK_WIDGET (window)))
+    return FALSE;
+
+  surface = gtk_native_get_surface (GTK_NATIVE (window));
+  return surface && gdk_display_get_monitor_at_surface (gdk_surface_get_display (surface),
+                                                        surface) == monitor;
+}
+
+
+static CuiCall *
+active_call (CallsDialpadWindow *self)
+{
+  for (guint i = 0; i < self->calls->len; i++) {
+    CuiCall *call = g_ptr_array_index (self->calls, i);
+
+    if (cui_call_get_state (call) == CUI_CALL_STATE_ACTIVE)
+      return call;
+  }
+
+  return NULL;
+}
+
+
+static void
+update_mode (CallsDialpadWindow *self)
+{
+  CuiCall *call, *shown;
+  const char *title;
+
+  if (!self->calls)
+    return;
+
+  if (self->calls->len == 0) {
+    gtk_stack_set_visible_child_name (self->stack, "dial");
+    gtk_editable_set_text (GTK_EDITABLE (self->dtmf_entry), "");
+    return;
+  }
+
+  call = active_call (self);
+  shown = call ?: g_ptr_array_index (self->calls, 0);
+  title = cui_call_get_display_name (shown);
+  if (!title || !*title)
+    title = cui_call_get_id (shown);
+
+  gtk_stack_set_visible_child_name (self->stack, "dtmf");
+  gtk_label_set_label (self->dtmf_title, title ?: "");
+  gtk_widget_set_sensitive (gtk_widget_get_parent (GTK_WIDGET (self->dtmf_entry)),
+                            call && cui_call_get_can_dtmf (call));
+}
+
+
+static gboolean
+update_now (CallsDialpadWindow *self)
+{
+  GdkMonitor *monitor = find_monitor (self);
+  gboolean in_front, shown;
+
+  self->update_id = 0;
+
+  in_front = gtk_window_is_active (self->main_window) ||
+             gtk_window_is_active (self->call_window) ||
+             gtk_window_is_active (GTK_WINDOW (self));
+  shown = gtk_widget_get_visible (GTK_WIDGET (self->main_window)) ||
+          gtk_widget_get_visible (GTK_WIDGET (self->call_window));
+
+  /* someone put the main window on that screen: stay out of the way */
+  if (monitor && on_monitor (self->main_window, monitor))
+    monitor = NULL;
+
+  if (!monitor || !in_front || !shown) {
+    if (self->monitor) {
+      g_debug ("Hiding the dial pad");
+      gtk_widget_set_visible (GTK_WIDGET (self), FALSE);
+      self->monitor = NULL;
+      calls_main_window_set_dialpad_page_visible (CALLS_MAIN_WINDOW (self->main_window), TRUE);
+    }
+    return G_SOURCE_REMOVE;
+  }
+
+  update_mode (self);
+
+  if (self->monitor != monitor) {
+    g_debug ("Showing the dial pad on %s", gdk_monitor_get_connector (monitor));
+    self->monitor = monitor;
+    calls_main_window_set_dialpad_page_visible (CALLS_MAIN_WINDOW (self->main_window), FALSE);
+    gtk_window_fullscreen_on_monitor (GTK_WINDOW (self), monitor);
+    gtk_window_present (GTK_WINDOW (self));
+  }
+
+  return G_SOURCE_REMOVE;
+}
+
+
+static void
+queue_update (CallsDialpadWindow *self)
+{
+  /* focus moves between our windows in two steps: don't flicker */
+  g_clear_handle_id (&self->update_id, g_source_remove);
+  self->update_id = g_timeout_add (UPDATE_DELAY_MS, (GSourceFunc) update_now, self);
+}
+
+
+static void
+dial_cb (CallsDialpadWindow *self)
+{
+  g_autofree char *number = g_strdup (gtk_editable_get_text (GTK_EDITABLE (self->number_entry)));
+
+  if (!*number)
+    return;
+
+  calls_main_window_dial (CALLS_MAIN_WINDOW (self->main_window), number);
+  gtk_editable_set_text (GTK_EDITABLE (self->number_entry), "");
+}
+
+
+static void
+number_changed_cb (CallsDialpadWindow *self)
+{
+  const char *number = gtk_editable_get_text (GTK_EDITABLE (self->number_entry));
+
+  gtk_widget_set_sensitive (self->dial_button, number && *number);
+}
+
+
+static void
+backspace_cb (CallsDialpadWindow *self)
+{
+  const char *number = gtk_editable_get_text (GTK_EDITABLE (self->number_entry));
+  glong len = g_utf8_strlen (number, -1);
+
+  if (len > 0)
+    gtk_editable_delete_text (GTK_EDITABLE (self->number_entry), len - 1, len);
+}
+
+
+static void
+backspace_long_press_cb (CallsDialpadWindow *self)
+{
+  gtk_editable_set_text (GTK_EDITABLE (self->number_entry), "");
+}
+
+
+static void
+dtmf_insert_text_cb (GtkEditable        *editable,
+                     const char         *text,
+                     int                 length,
+                     int                *position,
+                     CallsDialpadWindow *self)
+{
+  CuiCall *call = active_call (self);
+  int end;
+
+  g_signal_stop_emission_by_name (editable, "insert-text");
+
+  if (!call || !cui_call_get_can_dtmf (call))
+    return;
+
+  cui_call_send_dtmf (call, text);
+
+  /* keep what was sent visible, always appended */
+  end = g_utf8_strlen (gtk_editable_get_text (editable), -1);
+  g_signal_handlers_block_by_func (editable, dtmf_insert_text_cb, self);
+  gtk_editable_insert_text (editable, text, length, &end);
+  g_signal_handlers_unblock_by_func (editable, dtmf_insert_text_cb, self);
+  gtk_editable_set_position (editable, -1);
+}
+
+
+static void
+call_state_cb (CallsDialpadWindow *self)
+{
+  update_mode (self);
+}
+
+
+static void
+ui_call_added_cb (CallsDialpadWindow *self,
+                  CuiCall            *call)
+{
+  if (!self->calls)
+    return;
+
+  g_ptr_array_add (self->calls, g_object_ref (call));
+  g_signal_connect_object (call, "notify::state", G_CALLBACK (call_state_cb), self,
+                           G_CONNECT_SWAPPED);
+  g_signal_connect_object (call, "notify::can-dtmf", G_CALLBACK (call_state_cb), self,
+                           G_CONNECT_SWAPPED);
+  update_mode (self);
+  queue_update (self);
+}
+
+
+static void
+ui_call_removed_cb (CallsDialpadWindow *self,
+                    CuiCall            *call)
+{
+  if (!self->calls)
+    return;
+
+  g_signal_handlers_disconnect_by_data (call, self);
+  g_ptr_array_remove (self->calls, call);
+  update_mode (self);
+  queue_update (self);
+}
+
+
+/* The second screen can be small (LG Wing: 360x413 logical pixels), so the
+ * keypad here is more compact than libcall-ui's dial pad: no letters, less
+ * padding, and the number shares its row with the backspace button */
+static const char compact_css[] =
+  "window.calls-dialpad-window cui-keypad > grid > button {"
+  "  padding: 0px 14px; min-height: 50px; min-width: 64px; }"
+  "window.calls-dialpad-window cui-keypad .digit { font-size: 170%; }"
+  "window.calls-dialpad-window .phone-number-entry { font-size: 24px; }"
+  "window.calls-dialpad-window .dial-button { padding: 10px 40px; border-radius: 9999px; }";
+
+
+static GtkWidget *
+compact_keypad (GtkEntry *entry)
+{
+  GtkWidget *keypad = g_object_new (CUI_TYPE_KEYPAD,
+                                    "letters-visible", FALSE,
+                                    "symbols-visible", TRUE,
+                                    "row-spacing", 6,
+                                    "column-spacing", 16,
+                                    "halign", GTK_ALIGN_CENTER,
+                                    NULL);
+
+  cui_keypad_set_entry (CUI_KEYPAD (keypad), entry);
+  return keypad;
+}
+
+
+static GtkEntry *
+number_entry (void)
+{
+  GtkEntry *entry = GTK_ENTRY (gtk_entry_new ());
+
+  gtk_editable_set_alignment (GTK_EDITABLE (entry), 0.5);
+  /* typed with the keypad: no on-screen keyboard */
+  gtk_widget_set_can_focus (GTK_WIDGET (entry), FALSE);
+  gtk_widget_set_hexpand (GTK_WIDGET (entry), TRUE);
+  gtk_entry_set_has_frame (entry, FALSE);
+  gtk_widget_add_css_class (GTK_WIDGET (entry), "phone-number-entry");
+  return entry;
+}
+
+
+static GtkWidget *
+page_box (void)
+{
+  GtkWidget *box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 8);
+
+  gtk_widget_set_valign (box, GTK_ALIGN_CENTER);
+  gtk_widget_set_margin_start (box, 8);
+  gtk_widget_set_margin_end (box, 8);
+  gtk_widget_set_margin_top (box, 6);
+  gtk_widget_set_margin_bottom (box, 6);
+  return box;
+}
+
+
+static GtkWidget *
+build_dial_page (CallsDialpadWindow *self)
+{
+  GtkWidget *box, *row, *backspace;
+  GtkGesture *long_press;
+
+  box = page_box ();
+
+  row = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
+  self->number_entry = number_entry ();
+  g_signal_connect_swapped (self->number_entry, "changed", G_CALLBACK (number_changed_cb), self);
+  g_signal_connect_swapped (self->number_entry, "activate", G_CALLBACK (dial_cb), self);
+  /* keeps the number centred against the backspace button */
+  gtk_box_append (GTK_BOX (row), gtk_image_new ());
+  gtk_widget_set_size_request (gtk_widget_get_last_child (row), 44, -1);
+  gtk_box_append (GTK_BOX (row), GTK_WIDGET (self->number_entry));
+
+  backspace = gtk_button_new_from_icon_name ("edit-clear-symbolic");
+  gtk_widget_set_tooltip_text (backspace, _("Backspace through number"));
+  gtk_widget_set_size_request (backspace, 44, -1);
+  gtk_widget_add_css_class (backspace, "flat");
+  g_signal_connect_swapped (backspace, "clicked", G_CALLBACK (backspace_cb), self);
+  long_press = gtk_gesture_long_press_new ();
+  g_signal_connect_swapped (long_press, "pressed", G_CALLBACK (backspace_long_press_cb), self);
+  gtk_widget_add_controller (backspace, GTK_EVENT_CONTROLLER (long_press));
+  gtk_box_append (GTK_BOX (row), backspace);
+  gtk_box_append (GTK_BOX (box), row);
+
+  gtk_box_append (GTK_BOX (box), compact_keypad (self->number_entry));
+
+  self->dial_button = gtk_button_new_from_icon_name ("call-start-symbolic");
+  gtk_widget_set_tooltip_text (self->dial_button, _("Call that phone number"));
+  gtk_widget_set_halign (self->dial_button, GTK_ALIGN_CENTER);
+  gtk_widget_add_css_class (self->dial_button, "dial-button");
+  gtk_widget_add_css_class (self->dial_button, "suggested-action");
+  gtk_widget_set_sensitive (self->dial_button, FALSE);
+  g_signal_connect_swapped (self->dial_button, "clicked", G_CALLBACK (dial_cb), self);
+  gtk_box_append (GTK_BOX (box), self->dial_button);
+
+  return box;
+}
+
+
+static GtkWidget *
+build_dtmf_page (CallsDialpadWindow *self)
+{
+  GtkWidget *box;
+
+  box = page_box ();
+
+  self->dtmf_title = GTK_LABEL (gtk_label_new (""));
+  gtk_label_set_ellipsize (self->dtmf_title, PANGO_ELLIPSIZE_END);
+  gtk_widget_add_css_class (GTK_WIDGET (self->dtmf_title), "heading");
+  gtk_box_append (GTK_BOX (box), GTK_WIDGET (self->dtmf_title));
+
+  self->dtmf_entry = number_entry ();
+  g_signal_connect (gtk_editable_get_delegate (GTK_EDITABLE (self->dtmf_entry)),
+                    "insert-text", G_CALLBACK (dtmf_insert_text_cb), self);
+  gtk_box_append (GTK_BOX (box), GTK_WIDGET (self->dtmf_entry));
+
+  gtk_box_append (GTK_BOX (box), compact_keypad (self->dtmf_entry));
+
+  return box;
+}
+
+
+static void
+load_css (void)
+{
+  static gboolean loaded;
+  g_autoptr (GtkCssProvider) provider = NULL;
+
+  if (loaded)
+    return;
+  loaded = TRUE;
+
+  provider = gtk_css_provider_new ();
+  gtk_css_provider_load_from_string (provider, compact_css);
+  gtk_style_context_add_provider_for_display (gdk_display_get_default (),
+                                              GTK_STYLE_PROVIDER (provider),
+                                              GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+}
+
+
+static void
+calls_dialpad_window_init (CallsDialpadWindow *self)
+{
+  self->calls = g_ptr_array_new_with_free_func (g_object_unref);
+  self->settings = g_settings_new ("org.gnome.Calls");
+
+  load_css ();
+  gtk_widget_add_css_class (GTK_WIDGET (self), "calls-dialpad-window");
+  gtk_window_set_title (GTK_WINDOW (self), _("Dial Pad"));
+
+  self->stack = GTK_STACK (gtk_stack_new ());
+  gtk_stack_set_transition_type (self->stack, GTK_STACK_TRANSITION_TYPE_CROSSFADE);
+  gtk_stack_add_named (self->stack, build_dial_page (self), "dial");
+  gtk_stack_add_named (self->stack, build_dtmf_page (self), "dtmf");
+
+  adw_window_set_content (ADW_WINDOW (self), GTK_WIDGET (self->stack));
+}
+
+
+static void
+calls_dialpad_window_dispose (GObject *object)
+{
+  CallsDialpadWindow *self = CALLS_DIALPAD_WINDOW (object);
+
+  g_clear_handle_id (&self->update_id, g_source_remove);
+  g_clear_pointer (&self->calls, g_ptr_array_unref);
+  g_clear_object (&self->settings);
+
+  G_OBJECT_CLASS (calls_dialpad_window_parent_class)->dispose (object);
+}
+
+
+static void
+calls_dialpad_window_class_init (CallsDialpadWindowClass *klass)
+{
+  GObjectClass *object_class = G_OBJECT_CLASS (klass);
+
+  object_class->dispose = calls_dialpad_window_dispose;
+}
+
+
+CallsDialpadWindow *
+calls_dialpad_window_new (GtkApplication *application,
+                          GtkWindow      *main_window,
+                          GtkWindow      *call_window)
+{
+  CallsDialpadWindow *self;
+
+  g_return_val_if_fail (GTK_IS_APPLICATION (application), NULL);
+  g_return_val_if_fail (CALLS_IS_MAIN_WINDOW (main_window), NULL);
+  g_return_val_if_fail (GTK_IS_WINDOW (call_window), NULL);
+
+  self = g_object_new (CALLS_TYPE_DIALPAD_WINDOW, "application", application, NULL);
+  self->main_window = main_window;
+  self->call_window = call_window;
+  self->monitors = gdk_display_get_monitors (gdk_display_get_default ());
+
+  g_signal_connect_object (self->monitors, "items-changed",
+                           G_CALLBACK (queue_update), self, G_CONNECT_SWAPPED);
+  g_signal_connect_object (self->settings, "changed::dialpad-monitor",
+                           G_CALLBACK (queue_update), self, G_CONNECT_SWAPPED);
+  for (guint i = 0; i < 3; i++) {
+    GtkWindow *window = i == 0 ? main_window : i == 1 ? call_window : GTK_WINDOW (self);
+
+    g_signal_connect_object (window, "notify::is-active",
+                             G_CALLBACK (queue_update), self, G_CONNECT_SWAPPED);
+    g_signal_connect_object (window, "notify::visible",
+                             G_CALLBACK (queue_update), self, G_CONNECT_SWAPPED);
+  }
+  g_signal_connect_object (calls_manager_get_default (), "ui-call-added",
+                           G_CALLBACK (ui_call_added_cb), self, G_CONNECT_SWAPPED);
+  g_signal_connect_object (calls_manager_get_default (), "ui-call-removed",
+                           G_CALLBACK (ui_call_removed_cb), self, G_CONNECT_SWAPPED);
+
+  return self;
+}

@@ -45,6 +45,7 @@ source="
 	winglm-swivel.desktop
 	org.postmarketos.winglm.swivel.gschema.xml
 	90_winglm-phosh.gschema.override
+	90_winglm-calls.gschema.override
 	90-winglm-modem.rules
 	91-winglm-pulse.rules
 	winglm-dsp-setup
@@ -142,6 +143,9 @@ phosh_helpers() {
 	# the swivel decides the orientation: no forced portrait lock screen
 	install -Dm644 "$srcdir"/90_winglm-phosh.gschema.override \
 		"$subpkgdir"/usr/share/glib-2.0/schemas/90_winglm-phosh.gschema.override
+	# Calls (patched): dial pad on the swivel screen while it is on
+	install -Dm644 "$srcdir"/90_winglm-calls.gschema.override \
+		"$subpkgdir"/usr/share/glib-2.0/schemas/90_winglm-calls.gschema.override
 
 	# swivel screen brightness: follows the shell slider or has its own
 	install -Dm755 "$srcdir"/winglm-brightness \
