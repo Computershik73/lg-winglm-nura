@@ -2,7 +2,7 @@
 maintainer="team/gnome <achill@achill.org>"
 pkgname=calls
 pkgver=51.1
-pkgrel=3
+pkgrel=4
 pkgdesc="Phone dialer and call handler"
 arch="all"
 url="https://gitlab.gnome.org/GNOME/calls"
@@ -38,6 +38,7 @@ subpackages="$pkgname-doc $pkgname-dbg $pkgname-lang $pkgname-systemd"
 source="https://download.gnome.org/sources/calls/${pkgver%%.*}/calls-$pkgver.tar.xz
 	0001-dial-pad-window-on-a-second-screen.patch
 	0002-sip-retry-registration-after-temporary-failures.patch
+	0003-sip-dtmf-with-info.patch
 	"
 options="!check" # Requires running Wayland compositor
 
@@ -59,6 +60,7 @@ package() {
 
 sha512sums="
 a3a4c3bc23a073f519142dae7e5dceb73a04340aab34fe3a6a78c25a1e07247d25008e370f380bc765ef8c67b4a21f5e4906b80b92c04006a55da84ae5c42445  calls-51.1.tar.xz
-cc240a0f780527f9eb7e29e5439dc55c6237740e5ba02bf2b4bb867cd308b524118420c7ace35c5f3e72aa0aa2ff40507170e11f3d73d7d7dee93494cc7d447f  0001-dial-pad-window-on-a-second-screen.patch
-a95a6ba67a2cbad07ae096b851e7be7fdf01543acc977829b12d650a9942aa5fff7ae1724591d85293f1882c017d4fa8b655485d27d203815a1434c759f5958a  0002-sip-retry-registration-after-temporary-failures.patch
+266e405a8d84b8ab815046dec557afd8f1572d80c41bc3e54b45a66c2805caf9fbe8611cfb30001a6f9df6c76d5f5d44fa6ba0ce7296360363f6dc331ce4a569  0001-dial-pad-window-on-a-second-screen.patch
+b5bf2a883334a70c429e5f0ae38b027693dbf01ac8e74e8a5fcffe2a36498bb69317d440266b1a9ab2efe2c4c41a7592b940ff58d84b6c84c3a0231ee05bf1f2  0002-sip-retry-registration-after-temporary-failures.patch
+845588f27e115e018e7b4d3932f4ef6c8abd6409b097c1c12a1da8174d0af358135df390cfc294c78a4d26da71deebe795116b62d5d86464b58bedf82d5e06fa  0003-sip-dtmf-with-info.patch
 "

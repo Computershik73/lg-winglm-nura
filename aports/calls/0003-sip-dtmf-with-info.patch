@@ -1,0 +1,57 @@
+From: winglm port
+Subject: [PATCH] sip: send DTMF with SIP INFO
+
+SIP calls had no send_dtmf_tone, so the in-call keypad was insensitive.
+Send each key as SIP INFO (application/dtmf-relay); gateways that do the
+media themselves (here: the VoLTE gateway driving the modem's media
+engine) turn it into RFC 4733 events.
+---
+diff -ruN c/plugins/provider/sip/calls-sip-call.c d/plugins/provider/sip/calls-sip-call.c
+--- c/plugins/provider/sip/calls-sip-call.c	2026-10-12 22:00:27.000000000 +0400
++++ d/plugins/provider/sip/calls-sip-call.c	2026-11-21 10:17:53.845822160 +0400
+@@ -38,6 +38,7 @@
+ #include <glib/gi18n.h>
+ 
+ #include <sofia-sip/nua.h>
++#include <sofia-sip/sip_tag.h>
+ 
+ /**
+  * SECTION:sip-call
+@@ -262,6 +263,29 @@
+ }
+ 
+ 
++/* RFC 2833/4733 events would need our own media pipeline; INFO with
++ * application/dtmf-relay (the common SIP INFO DTMF format) reaches
++ * gateways that do the media themselves */
++static void
++calls_sip_call_send_dtmf_tone (CallsCall *call,
++                               char       key)
++{
++  CallsSipCall *self = CALLS_SIP_CALL (call);
++  g_autofree char *body = NULL;
++
++  if (!self->nh) {
++    g_warning ("Can't send DTMF %c: no call handle", key);
++    return;
++  }
++
++  body = g_strdup_printf ("Signal=%c\r\nDuration=160\r\n", key);
++  g_debug ("Sending DTMF %c with SIP INFO", key);
++  nua_info (self->nh,
++            SIPTAG_CONTENT_TYPE_STR ("application/dtmf-relay"),
++            SIPTAG_PAYLOAD_STR (body),
++            TAG_END ());
++}
++
+ static void
+ calls_sip_call_class_init (CallsSipCallClass *klass)
+ {
+@@ -274,6 +298,7 @@
+ 
+   call_class->answer = calls_sip_call_answer;
+   call_class->hang_up = calls_sip_call_hang_up;
++  call_class->send_dtmf_tone = calls_sip_call_send_dtmf_tone;
+ 
+   props[PROP_CALL_HANDLE] =
+     g_param_spec_pointer ("nua-handle",

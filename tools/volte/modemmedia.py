@@ -191,6 +191,16 @@ class ModemRelay:
                  % (codec, pt, 'octet-aligned' if oa else 'bandwidth-efficient', bits, dtmf_pt,
                     self.net_ip, self.net_port, remote_ip, remote_port))
 
+    def send_dtmf(self, key):
+        """one DTMF key; the modem sends it as RFC 4733 events if the call
+        negotiated telephone-event, else in band"""
+        if not (self.started and self.e):
+            self.log('modem media: DTMF %s before the media started' % key)
+            return False
+        self.e.send(mmpf.REQUEST, self.session, mmpf.dtmf_request(key))
+        self.log('modem media: DTMF %s' % key)
+        return True
+
     def _poll(self):
         if not self.e:
             return False

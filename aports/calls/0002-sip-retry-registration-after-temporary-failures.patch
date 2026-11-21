@@ -8,7 +8,7 @@ account has to come back by itself: register again every 30 s.
 ---
 diff -ruN b/plugins/provider/sip/calls-sip-origin.c c/plugins/provider/sip/calls-sip-origin.c
 --- b/plugins/provider/sip/calls-sip-origin.c	2026-10-12 22:00:27.000000000 +0400
-+++ c/plugins/provider/sip/calls-sip-origin.c	2026-11-21 09:55:04.726960748 +0400
++++ c/plugins/provider/sip/calls-sip-origin.c	2026-11-21 10:17:53.774332153 +0400
 @@ -133,6 +133,8 @@
  
    GList                *calls;

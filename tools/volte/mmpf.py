@@ -105,6 +105,12 @@ def request(req, mode):
     return _u32s(req, mode, 0) + bytes(12)
 
 
+def dtmf_request(signal):
+    """R_SEND_DTMF on the TX stream: the tone string at byte 12, 140 bytes in
+    all (MMPF_CP_IF::sendDTMF; the engine picks the event length itself)"""
+    return _u32s(R_SEND_DTMF, TX, 0) + _cstr(signal, 128)
+
+
 class Mmpf:
     def __init__(self, log=print):
         self.qmi = qmiqrtr.Client(SVC, 'lge-ims')

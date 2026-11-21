@@ -360,6 +360,26 @@ class Manager:
             self.hangup(call, 'calls bye')
             return
         self.loc_send(response(m, 200), addr)
+        if meth == 'INFO':
+            self.dtmf(call, m)
+
+    def dtmf(self, call, m):
+        """GNOME Calls (patched) sends keypad presses as SIP INFO
+        application/dtmf-relay; the modem media engine plays them out"""
+        ct = (m.get('Content-Type') or '').split(';')[0].strip().lower()
+        sig = re.search(r'(?im)^\s*signal\s*=\s*([0-9a-d*#])', m.body or '')
+        if ct != 'application/dtmf-relay' or not sig:
+            log('INFO from Calls ignored (%s)' % (ct or 'no body'))
+            return
+        key = sig.group(1).upper()
+        send = getattr(call.relay, 'send_dtmf', None)
+        if not send:
+            log('DTMF %s: not supported with AP media' % key)
+            return
+        try:
+            send(key)
+        except Exception as e:
+            log('DTMF %s failed: %s' % (key, e))
 
     def on_local_response(self, m, addr):
         call = self.calls.get(m.call_id)
