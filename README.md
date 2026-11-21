@@ -35,7 +35,7 @@ Nura; the port uses its tooling (pmbootstrap, pmaports).
 | VoLTE (outgoing and incoming, AMR/AMR-WB), audio in the modem DSP | ✅ (own IMS client, see [docs/volte.md](docs/volte.md)) |
 | VoLTE: DTMF (voice menus), mute, ringback tone | ✅ |
 | VoLTE calls while mobile data is up | ✅ |
-| Volume keys during calls (earpiece, headset) | ✅ (kernel r8, `winglm-call-volume`) |
+| Volume keys during calls (earpiece, headset, speakerphone) | ✅ (kernel r8, `winglm-call-volume`, `winglm-spk-gain`) |
 | Calls go over 2G/3G when VoLTE is not available | ✅ |
 | Calls: dial pad on the swivel screen while it is open | ✅ (GNOME Calls fork) |
 | Brightness of both panels | ✅ |
@@ -46,8 +46,6 @@ Nura; the port uses its tooling (pmbootstrap, pmaports).
 See the issue tracker for the current state; at the time of writing:
 
 * Suspend (s2idle) — not working on this kernel yet.
-* Speakerphone volume in calls — implemented (the amplifier gain, set by
-  `winglm-spk-gain`), not tested in a real call yet.
 * ACDB audio calibration (Android's echo cancellation / noise suppression
   tuning) is not loaded.
 * Cameras and the fingerprint sensor (Qualcomm CamX / TEE) — not planned.
