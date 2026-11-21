@@ -2,7 +2,7 @@
 pkgname=device-lg-winglm
 pkgdesc="LG Wing"
 pkgver=1
-pkgrel=32
+pkgrel=33
 url="https://postmarketos.org"
 license="MIT"
 arch="aarch64"
@@ -43,6 +43,8 @@ source="
 	org.postmarketos.winglm.brightness.gschema.xml
 	winglm-swivel
 	winglm-swivel.desktop
+	winglm-pulse-session
+	winglm-pulse-session.desktop
 	org.postmarketos.winglm.swivel.gschema.xml
 	90_winglm-phosh.gschema.override
 	90_winglm-calls.gschema.override
@@ -58,10 +60,11 @@ source="
 	winglm-bt.initd
 	winglm-vss
 	winglm-vss.initd
+	winglm-voice
+	winglm-voice.initd
 	ucm2/lito-mtp-snd-card.conf
 	ucm2/HiFi.conf
 	ucm2/VoiceCall.conf
-	q6voiced.conf
 	50-winglm-routes.nm-dispatcher
 	volte/qmiqrtr.py
 	volte/ipadata.py
@@ -140,6 +143,12 @@ phosh_helpers() {
 	# the phrog greeter session reads its own autostart dir
 	install -Dm644 "$srcdir"/winglm-swivel.desktop \
 		"$subpkgdir"/etc/phrog/autostart/winglm-swivel.desktop
+	# PulseAudio left over from an earlier session: restart it on this
+	# session's bus (otherwise only "Dummy Output")
+	install -Dm755 "$srcdir"/winglm-pulse-session \
+		"$subpkgdir"/usr/libexec/winglm-pulse-session
+	install -Dm644 "$srcdir"/winglm-pulse-session.desktop \
+		"$subpkgdir"/etc/xdg/autostart/winglm-pulse-session.desktop
 	# the swivel decides the orientation: no forced portrait lock screen
 	install -Dm644 "$srcdir"/90_winglm-phosh.gschema.override \
 		"$subpkgdir"/usr/share/glib-2.0/schemas/90_winglm-phosh.gschema.override
@@ -167,9 +176,8 @@ dsp() {
 		make-dynpart-mappings
 		msm-firmware-loader
 		pd-mapper
+		py3-gobject3
 		python3
-		q6voiced
-		q6voiced-openrc
 		qrtr-ns
 		rmtfs
 		tqftpserv
@@ -188,7 +196,10 @@ dsp() {
 	# LG SIM lock: VSS init request so the USIM becomes ready (an LG RIL
 	# helper's job on Android)
 	install -Dm755 "$srcdir"/winglm-vss "$subpkgdir"/usr/bin/winglm-vss
-	for s in winglm-adsp winglm-rmtfs winglm-modem winglm-wlan winglm-bt winglm-vss; do
+	# calls: DSP voice session while ModemManager has a call (instead of
+	# q6voiced, which gives up before the call route is set: no ringback)
+	install -Dm755 "$srcdir"/winglm-voice "$subpkgdir"/usr/bin/winglm-voice
+	for s in winglm-adsp winglm-rmtfs winglm-modem winglm-wlan winglm-bt winglm-vss winglm-voice; do
 		install -Dm755 "$srcdir"/$s.initd "$subpkgdir"/etc/init.d/$s
 	done
 	# modem data port for ModemManager, rmtfs shared memory
@@ -204,9 +215,6 @@ dsp() {
 	install -Dm644 "$srcdir"/HiFi.conf "$ucm"/HiFi.conf
 	install -Dm644 "$srcdir"/VoiceCall.conf "$ucm"/VoiceCall.conf
 	ln -s lito-mtp-snd-card.conf "$ucm"/lito-mtp-snd-ca.conf
-	# calls: q6voiced holds the voice front end open during a call
-	install -Dm644 "$srcdir"/q6voiced.conf \
-		"$subpkgdir"/usr/share/q6voiced/q6voiced.conf
 }
 
 volte() {
@@ -271,6 +279,8 @@ fdf4b593b7d99ce8f04d919001def264142715d87f278b5a47a9c2126789c5070e250521fe9b88d9
 aac963d4785725d60d1059ceea7bc3e4621ed9a6120ee1a0aa2fcc668d9863059abfd4cacbd8599cd673f16846327a7de85a40699caf8f56c00a9b2d7792c39d  org.postmarketos.winglm.brightness.gschema.xml
 69966b65c943f69268969f250981d3411c7aa884b31ba1edac22cb9a332670544d1fe3316de6be49b8cd43fb8aa37bea3d7ee922c620a8dc8f8c18b3b249d174  winglm-swivel
 f4656e1e5182c226d3dfb6a8db12b595740e3d43d904784ce4c6b871b108eaf7823e829c8150fa3bf9ddbb470c80bbaa2132e3e98ca6c772b2d3c2a176ee08f7  winglm-swivel.desktop
+72b1e03ab32849caf7e5ae40ee0c93ebe9732f731e10dfcdd47a917f448086dd91475cbe34b6cd4e415c5b75d0e4ae78b1974c0e58c05c411480d8b6a84163b9  winglm-pulse-session
+a89ff4acd3d3ccb577b7cac37fc74356e9867e4e48ca174b953c3e177e5976fd4c58e6a1b9fbc4f27b25b33d4c0787637f4d86b3c09e92e3b36363a20c27da69  winglm-pulse-session.desktop
 7d0ecb3ec1d4ab8d1bf0df2723e14c3bb74117720a60b4f6af8a596fdca514fb478a635511f636fdf42b01939127d84967ed005ffd584d4ac364640497b8fcc6  org.postmarketos.winglm.swivel.gschema.xml
 9c21a7923026cfa9aa50918a5800d521605d44f863b15c19e346478a98f78d8aaa3924b287771fdd0576fac86fb7413a29e72c52023ff381fb7aff7672777baa  90_winglm-phosh.gschema.override
 e23e1187a9e535c19046fe982c3be290b045c224649a6361c3b34cfb8e5d43e60df79769acab955e04fe8bca59659d5bb0576a18e058a686279a487a7b130f3e  90_winglm-calls.gschema.override
@@ -286,10 +296,11 @@ f86d5abefc28e127fc670d6f494dbf74ad3096d638b88dd0c447afbcb43c30106d7781fd428615aa
 4e8bba07721fed5ff13acc78f972edadfdb7482e9490225ccf00fbb40199d1734d7d25879d312db1c14fa6a4ae914ddff21ed2dff4bd11660405a7546b0b2dd5  winglm-bt.initd
 75b72581a7278e9bfaeea51519de057f42ef8bedfe446e6fffa2782fff6ee7522e1795b05c87fda66d11d26b5825e071b5290b91c2ab9f08d33c97eab4aa4b86  winglm-vss
 8afc748b883d8a6ad4b33501028434201896d43631a6960f35ea9d06015df3dc524cc7c7a4d461c7cf199e3efce4d8e100bd24eb2f1fabd7798191646d8ecbce  winglm-vss.initd
+f32acf52cf06cc4a60103fb18d23bb85a729f29f8476d89ae0c7b29da25a22c10f8ad27ba623c4d7aa6e4aab853ebb6657acf656223bc98682465510b9f11e4f  winglm-voice
+5b8206278a249fa654664a5365656ef15d60e4220028261f08d6d5fe1fe19a22353d05e37fb85e998d29cb5ed976ad16d2f081f72737cfea425b22026c28e265  winglm-voice.initd
 bcbcddc867814bbbb3bf22926fe75addb32b86f117ac0c84009eca880d9c12286c97ae7bfd6d7c1e3fcf77e577ef2458124b2dbb49e344756dac65b60a6ebe4f  lito-mtp-snd-card.conf
 f00bd70af66a449b4c3c65b44e3cb137b7f06679822d3969c8899c109ec90e54f1c9e8bb55275e6805874c34c07c81ea3675ddf749a926590ea3cb79fc2f97d4  HiFi.conf
 8f6f72a2ead447faad8d4af4375d443a545a06315780b80d351d226750bc5e9e3daca88b00d2350a711910a85cd6d68f0ffba1b43636d8d83d83ca0470e4f405  VoiceCall.conf
-3842badf457a7421c3de86edf50c9c7015eb82a287d564c3b6d390a78566e17817ef32685df1829597b2d2691da1aa6cc2679e045f71b5a61f46d66e5b0e35a8  q6voiced.conf
 6dcd03a9c42fbe3179cd3972518d5a5d65f837b0536a7aa24292a3d23dc0447a62a45bb61cc6421335a021962b6be731a3c21a2c70f67eda0aad4de9812d5aec  50-winglm-routes.nm-dispatcher
 9a93d22d5cad09ccabefcffc1d158204720852914b0779eb55e9539a3301029ce97559728706aa2240bf04c356ff3778d42687d37423bf16134c466972e7a30c  qmiqrtr.py
 86880db216e1d4e4acf7d9621b2a3a5d703942b1770f049fd21dbe299ed33b9384d05795827efb652110040815ce7dca6af7d1863a1bd4b41a3b0d1182cc023f  ipadata.py
@@ -299,8 +310,8 @@ e5093b4fc9ee90dbc88d6afc3abd4bdf7a0d35500a1c03ac80629aa0cd964610eeefc3c25f1bd854
 5ec88abb2628d5a7b36a89b41073f578dc4b76363468c0593d43e204a636ae8481e3b4bbdec898312a0af16c263d076f71df4d865152bb6940d3e3c6fc1e453c  media.py
 8f5a19a82b65926a7ff39d382dd76a1aa5c0099cd54b7f068625c2b1747e3375c7fe3f49f57ecbd561f1252914e511d48d83ee79c5c665d262e601631671059b  mmpf.py
 1e7ba541067c6a93a67b03e96297a05e56718523a09ff4b0f127006dceb369f1de00179fb9d00ec313d8b3d926e7152b9ee9736d9be938b906fec2e8df149bc3  modemmedia.py
-d25f5808b37ca88d66e716bccdeed5d077e4d808a036763725260a32ad245e7dc2970e580f0efb19d7d4817e3b45b4d34e96abe1d1451f9b6a1956c95f302326  imsreg2.py
-d5cbb15f57810b5fabe7b510715bae4138e912bfc2fa5b22c2032d1b85d120031404221c1c052202aca198705d9a8f4ca184d55ee610daef02bbba3a3fdbd3d9  volted.py
+b500a3dea0daa9b8e5557bc4f0ff5957affc0e64f6e83edefbaf972b5474a5bd57ebcbf8d9be6c11df9c71b67d2e8205bbd122fd2c330bc488bb1bb59908c9f3  imsreg2.py
+77dd52d88b33a0b4ff2f164d6e244a9a3d847abe93bacd21dba6eb2ee36da87106794517b2f1a24dab62bf90dfab34b14055ce596bd776b71c672c2b8899b6cc  volted.py
 963a923d4064156e83c94328a50394f63faa843c6a57cff0f205b54e05604bd62ed058ce7d5b6f02144fa82f6f7e43c64d44694308ddff5fd1b1ed295ea614e2  winglm-volte.initd
 1968d81b178902d4739bbaab0a2f465ea074bc87490a21e7848b4ba6e2178d7294cad16171fe8fec701b80184915daa0b8ba61ec136e4300e418b75ea1d51762  winglm-volte-calls
 e63a70cb896ca984da1b7bb0b2df77291a09b1b5a5b41702faa61a66c2173a77b75dd5714c7310ba137df70321e70dc3e386aad3e1af217a3846b273250595f7  winglm-volte-calls.desktop

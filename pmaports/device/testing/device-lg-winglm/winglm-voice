@@ -1,0 +1,140 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""winglm-voice: hold the VoiceMMode1 front end (hw:0,2) open while
+ModemManager has an outgoing or active call. Preparing both directions of
+it starts the DSP voice session that carries a 2G/3G call.
+
+Replaces q6voiced, which tries to open it once per call state change: the
+open fails until callaudiod has switched the card to the call route, which
+takes a few seconds, so a call often had no audio until it was answered
+(no ringback tone). Here the open is retried until it works."""
+import ctypes
+import signal
+import sys
+import time
+
+from gi.repository import Gio, GLib
+
+DEV = b'hw:0,2'
+RATE = 8000
+RETRY_MS = 300
+RETRIES = 100                      # 30 s
+OPEN_STATES = {1, 2, 4, 5}         # MM_CALL_STATE dialing, ringing-out, active, held
+TERMINATED = 7
+MM = 'org.freedesktop.ModemManager1'
+
+
+def log(msg):
+    print('%s %s' % (time.strftime('%H:%M:%S'), msg), flush=True)
+
+
+class Voice:
+    def __init__(self):
+        self.lib = ctypes.CDLL('libasound.so.2')
+        # hw_params fails until the route is there: keep ALSA's error
+        # messages out of the log
+        fn = ctypes.CFUNCTYPE(None, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p,
+                              ctypes.c_int, ctypes.c_char_p)
+        self._quiet = fn(lambda *a: None)
+        self.lib.snd_lib_error_set_handler(self._quiet)
+        self.pcms = []
+        self.wanted = False
+        self.src = None
+        self.tries = 0
+
+    def want(self, on):
+        if on == self.wanted:
+            return
+        self.wanted = on
+        if on:
+            self.tries = 0
+            if not self._attempt():
+                self.src = GLib.timeout_add(RETRY_MS, self._tick)
+        else:
+            if self.src:
+                GLib.source_remove(self.src)
+                self.src = None
+            if self.pcms:
+                log('call over: voice session stopped')
+            self._close()
+
+    def _tick(self):
+        if self._attempt():
+            self.src = None
+            return False
+        if self.tries >= RETRIES:
+            log('could not start the voice session (%d tries)' % self.tries)
+            self.src = None
+            return False
+        return True
+
+    def _attempt(self):
+        self.tries += 1
+        self._close()
+        ok = True
+        for stream in (0, 1):
+            p = ctypes.c_void_p()
+            if self.lib.snd_pcm_open(ctypes.byref(p), DEV, stream, 0) < 0:
+                ok = False
+                break
+            self.pcms.append(p)
+            # S16_LE, RW interleaved, mono, 0.5 s latency
+            if self.lib.snd_pcm_set_params(p, 2, 3, 1, RATE, 0, 500000) < 0:
+                ok = False
+                break
+        if ok:
+            ok = all(self.lib.snd_pcm_prepare(p) >= 0 for p in self.pcms)
+        if ok:
+            log('voice session started (try %d)' % self.tries)
+            return True
+        self._close()
+        return False
+
+    def _close(self):
+        for p in self.pcms:
+            self.lib.snd_pcm_close(p)
+        self.pcms = []
+
+
+def main():
+    voice = Voice()
+    calls = {}                     # call object path -> MM call state
+
+    def update():
+        voice.want(any(s in OPEN_STATES for s in calls.values()))
+
+    def on_state(conn, sender, path, iface, member, params, data):
+        old, new, reason = params.unpack()
+        log('call %s: state %d -> %d' % (path.rsplit('/', 1)[-1], old, new))
+        if new == TERMINATED:
+            calls.pop(path, None)
+        else:
+            calls[path] = new
+        update()
+
+    def mm_gone(conn, name):
+        if calls:
+            log('ModemManager went away')
+            calls.clear()
+            update()
+
+    bus = Gio.bus_get_sync(Gio.BusType.SYSTEM)
+    bus.signal_subscribe(None, MM + '.Call', 'StateChanged', None, None,
+                         Gio.DBusSignalFlags.NONE, on_state, None)
+    Gio.bus_watch_name_on_connection(bus, MM, Gio.BusNameWatcherFlags.NONE, None, mm_gone)
+
+    loop = GLib.MainLoop()
+    try:
+        from gi.repository import GLibUnix
+        add_signal = GLibUnix.signal_add
+    except ImportError:
+        add_signal = GLib.unix_signal_add
+    for s in (signal.SIGTERM, signal.SIGINT):
+        add_signal(GLib.PRIORITY_DEFAULT, s, lambda: (voice.want(False), loop.quit(), False)[-1])
+    log('waiting for ModemManager calls')
+    loop.run()
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

@@ -1,0 +1,30 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# PulseAudio outlives a graphical session: after logging in again (or the
+# session restarting) the new session's "pulseaudio --start" finds the old
+# daemon and keeps it, still connected to the previous session's D-Bus. Its
+# device reservation (org.freedesktop.ReserveDevice1) then fails with an I/O
+# error, it never opens the sound card and only "Dummy Output" is left.
+#
+# Run at session start: restart PulseAudio when it belongs to another
+# session bus, and restart callaudiod with it (callaudiod hangs when
+# PulseAudio goes away under it; D-Bus activation starts it again).
+
+[ -n "$DBUS_SESSION_BUS_ADDRESS" ] || exit 0
+uid=$(id -u)
+pid=$(pgrep -u "$uid" -x pulseaudio | head -n 1)
+[ -n "$pid" ] || exit 0
+
+bus=$(tr '\0' '\n' < /proc/"$pid"/environ 2>/dev/null | sed -n 's/^DBUS_SESSION_BUS_ADDRESS=//p')
+[ "$bus" = "$DBUS_SESSION_BUS_ADDRESS" ] && exit 0
+
+logger -t winglm-pulse-session "PulseAudio $pid is on a stale session bus: restarting it"
+pulseaudio -k 2>/dev/null
+for i in 1 2 3 4 5 6 7 8 9 10; do
+	pgrep -u "$uid" -x pulseaudio >/dev/null || break
+	sleep 0.3
+done
+pulseaudio --start --log-target=syslog
+pkill -u "$uid" -x callaudiod
+exit 0

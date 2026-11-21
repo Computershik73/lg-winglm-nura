@@ -1,0 +1,19 @@
+#!/sbin/openrc-run
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+description="LG Wing: DSP voice session for modem (2G/3G) calls"
+supervisor=supervise-daemon
+command=/usr/bin/winglm-voice
+command_user="nobody:audio"
+output_log=/var/log/winglm-voice.log
+error_log=/var/log/winglm-voice.log
+respawn_delay=2
+
+depend() {
+	need dbus
+	after modemmanager winglm-adsp
+}
+
+start_pre() {
+	checkpath -f -o nobody:audio -m 0644 /var/log/winglm-voice.log
+}

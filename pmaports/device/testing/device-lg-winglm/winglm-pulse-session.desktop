@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=LG Wing: PulseAudio for this session
+Exec=/usr/libexec/winglm-pulse-session
+NoDisplay=true
+X-GNOME-Autostart-Phase=Initialization
+X-GNOME-AutoRestart=false

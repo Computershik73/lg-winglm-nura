@@ -33,6 +33,7 @@ import modemmedia
 from sipmsg import Msg, branch, rnd, response, uri_of, user_of, hostport_of, params
 
 LOCAL_PORT = 5070
+CALLS_EXPIRES = 60          # registration time granted to GNOME Calls
 ECHO_TEST = '0000000'      # dialled in Calls: local audio loopback, no network
 SECRETS = []
 
@@ -319,7 +320,16 @@ class Manager:
             exp = m.get('Expires') or (re.search(r'expires=(\d+)', c or '') or [None, None])[1]
             log('GNOME Calls REGISTER from %s:%d expires %s' % (addr[0], addr[1], exp))
             gone = exp == '0' or not c or c.strip() == '*'
-            grant = 0 if gone else min(int(exp or 3600), 3600)
+            # short: Calls has to notice soon when IMS goes away
+            grant = 0 if gone else min(int(exp or 3600), CALLS_EXPIRES)
+            if not gone and not self.ims_registered():
+                # VoLTE not available: the account goes offline in Calls, so
+                # it dials over the modem (CS); Calls (patched) registers
+                # again every 30 s and comes back online once IMS is up.
+                # Calls being here is still what brings IMS up.
+                self.loc_send(response(m, 503, 'VoLTE not available', extra=[('Retry-After', '30')]), addr)
+                self.calls_registered(uri_of(c), addr, grant)
+                return
             r = response(m, 200, to_tag=rnd(6), extra=[('Contact', (c or '') + ';expires=%d' % grant),
                                                        ('Expires', str(grant))])
             self.loc_send(r, addr)
@@ -816,10 +826,18 @@ class Manager:
         import pwd
         import subprocess
         try:
-            pid = subprocess.run(['pgrep', '-x', 'callaudiod'], capture_output=True,
-                                 text=True).stdout.split()
-            pid = [p for p in pid if os.stat('/proc/' + p).st_uid != pwd.getpwnam('greetd').pw_uid]
+            greeter = pwd.getpwnam('greetd').pw_uid
+            pid = []
+            # callaudiod may not run (PulseAudio restarted): any process of
+            # the session gives its bus, D-Bus activation starts callaudiod
+            for name in ('callaudiod', 'gnome-calls'):
+                pid = [p for p in subprocess.run(['pgrep', '-x', name], capture_output=True,
+                                                 text=True).stdout.split()
+                       if os.stat('/proc/' + p).st_uid not in (0, greeter)]
+                if pid:
+                    break
             if not pid:
+                log('callaudiod mode %d: no session found' % mode)
                 return
             st = os.stat('/proc/' + pid[0])
             env = dict(x.split('=', 1) for x in open('/proc/%s/environ' % pid[0]).read().split('\0') if '=' in x)

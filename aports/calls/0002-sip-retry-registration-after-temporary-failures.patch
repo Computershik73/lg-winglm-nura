@@ -1,0 +1,92 @@
+From: winglm port
+Subject: [PATCH] sip: retry the registration after temporary failures
+
+An auto-connect account that gets 503 (or a timeout / 5xx) from its
+registrar stayed offline until Calls was restarted. With a local gateway
+that refuses registrations while its upstream (e.g. IMS) is not ready, the
+account has to come back by itself: register again every 30 s.
+---
+diff -ruN b/plugins/provider/sip/calls-sip-origin.c c/plugins/provider/sip/calls-sip-origin.c
+--- b/plugins/provider/sip/calls-sip-origin.c	2026-10-12 22:00:27.000000000 +0400
++++ c/plugins/provider/sip/calls-sip-origin.c	2026-11-21 09:55:04.726960748 +0400
+@@ -133,6 +133,8 @@
+ 
+   GList                *calls;
+   GHashTable           *call_handles;
++
++  guint                 register_retry_id;
+ };
+ 
+ static void calls_sip_origin_message_source_interface_init (CallsOriginInterface *iface);
+@@ -486,6 +488,36 @@
+ }
+ 
+ 
++#define REGISTER_RETRY_S 30
++
++static void go_online (CallsAccount *account, gboolean online);
++
++static gboolean
++register_retry_cb (gpointer user_data)
++{
++  CallsSipOrigin *self = CALLS_SIP_ORIGIN (user_data);
++
++  self->register_retry_id = 0;
++  if (self->auto_connect && self->state != CALLS_ACCOUNT_STATE_ONLINE) {
++    g_debug ("Retrying the registration");
++    go_online (CALLS_ACCOUNT (self), TRUE);
++  }
++
++  return G_SOURCE_REMOVE;
++}
++
++/* A temporary failure (the registrar is not ready yet, e.g. a local
++ * gateway waiting for its upstream) must not leave the account offline
++ * until Calls is restarted */
++static void
++schedule_register_retry (CallsSipOrigin *self)
++{
++  if (!self->auto_connect || self->register_retry_id)
++    return;
++
++  self->register_retry_id = g_timeout_add_seconds (REGISTER_RETRY_S, register_retry_cb, self);
++}
++
+ static void
+ sip_r_register (int              status,
+                 char const      *phrase,
+@@ -532,6 +564,7 @@
+     change_state (origin,
+                   CALLS_ACCOUNT_STATE_OFFLINE,
+                   CALLS_ACCOUNT_STATE_REASON_CONNECTION_DNS_ERROR);
++    schedule_register_retry (origin);
+   } else if (status == 904) {
+     g_warning ("REGISTER: unmatched challenge");
+     change_state (origin,
+@@ -542,6 +575,8 @@
+     change_state (origin,
+                   CALLS_ACCOUNT_STATE_ERROR,
+                   CALLS_ACCOUNT_STATE_REASON_INTERNAL_ERROR);
++    if (status == 408 || status >= 500)
++      schedule_register_retry (origin);
+   }
+ }
+ 
+@@ -1132,6 +1167,8 @@
+                   TAG_END ());
+ 
+   } else {
++    g_clear_handle_id (&self->register_retry_id, g_source_remove);
++
+     if (self->state == CALLS_ACCOUNT_STATE_OFFLINE)
+       return;
+ 
+@@ -1561,6 +1598,8 @@
+   gboolean su_step_timeout = FALSE;
+   guint i = 0;
+ 
++  g_clear_handle_id (&self->register_retry_id, g_source_remove);
++
+   if (!self->use_direct_connection && self->state == CALLS_ACCOUNT_STATE_ONLINE) {
+     go_online (CALLS_ACCOUNT (self), FALSE);
+ 

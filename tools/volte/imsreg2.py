@@ -181,8 +181,18 @@ class ImsLink:
         imei = modem_ids()
         self.secrets += [imei, '%s-%s-0' % (imei[:8], imei[8:14])]
         self.instance = '<urn:gsma:imei:%s-%s-0>' % (imei[:8], imei[8:14])
-        plmn, tac, eci = lte_cell()
-        self.pani = '3GPP-E-UTRAN-FDD; utran-cell-id-3gpp=%s%04X%07X' % (plmn, tac, eci)
+        # right after a restart the modem may not answer the NAS query yet
+        plmn = tac = eci = None
+        for _ in range(3):
+            plmn, tac, eci = lte_cell()
+            if plmn and tac is not None and eci is not None:
+                break
+            time.sleep(1)
+        if plmn and tac is not None and eci is not None:
+            self.pani = '3GPP-E-UTRAN-FDD; utran-cell-id-3gpp=%s%04X%07X' % (plmn, tac, eci)
+        else:
+            self.log('cell location unknown: P-Access-Network-Info without the cell id')
+            self.pani = '3GPP-E-UTRAN-FDD'
         self.domain = self.isim.domain
         self.cseq = 0
         self.pc = random.randint(15000, 32000) * 2 + 1

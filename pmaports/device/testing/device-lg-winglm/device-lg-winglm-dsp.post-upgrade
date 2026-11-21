@@ -1,9 +1,11 @@
 #!/bin/sh
 # name service early (tqftpserv starts in boot), the rest in default
 rc-update add qrtr-ns boot >/dev/null 2>&1 || true
-for s in pd-mapper winglm-adsp winglm-rmtfs winglm-modem winglm-wlan winglm-bt winglm-vss q6voiced; do
+for s in pd-mapper winglm-adsp winglm-rmtfs winglm-modem winglm-wlan winglm-bt winglm-vss winglm-voice; do
 	rc-update add $s default >/dev/null 2>&1 || true
 done
+# winglm-voice took over from q6voiced
+rc-update del q6voiced default >/dev/null 2>&1 || true
 # ModemManager and BlueZ were parked while there was no modem / Bluetooth
 rc-update del modemmanager winglm-off >/dev/null 2>&1 || true
 rc-update add modemmanager default >/dev/null 2>&1 || true
