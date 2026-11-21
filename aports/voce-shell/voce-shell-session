@@ -1,0 +1,71 @@
+#!/bin/sh
+# LG Wing: session start script for the Voce shell (wayland-mobile-shell),
+# started by greetd/phrog from /usr/share/wayland-sessions/voce.desktop.
+#
+# The shell is its own Wayland compositor (QtWaylandCompositor) and draws
+# straight to KMS through Qt's eglfs platform. Only the swivel screen (DSI-2,
+# 1080x1240) is used: the QWERTY prototype the shell is made for has only
+# that screen. The main screen (DSI-1) and the msm_drm writeback connector
+# (Virtual-1) are switched off.
+#
+# Settings for tests (environment, e.g. in ~/.config/voce-shell/env):
+#   VOCE_OUTPUT        output to use (default DSI2; Qt names: DSI1, DSI2)
+#   VOCE_SHELL         binary to run (default /usr/bin/wayland-mobile-shell)
+
+[ -f "$HOME/.config/voce-shell/env" ] && . "$HOME/.config/voce-shell/env"
+
+if [ -z "$DBUS_SESSION_BUS_ADDRESS" ]; then
+	exec dbus-run-session -- "$0" "$@"
+fi
+
+LOGDIR="${XDG_CACHE_HOME:-$HOME/.cache}/voce-shell"
+mkdir -p "$LOGDIR"
+[ -f "$LOGDIR/session.log" ] && mv -f "$LOGDIR/session.log" "$LOGDIR/session.log.old"
+exec >"$LOGDIR/session.log" 2>&1
+echo "voce-shell-session: $(date)"
+
+OUTPUT="${VOCE_OUTPUT:-DSI2}"
+SHELL_BIN="${VOCE_SHELL:-/usr/bin/wayland-mobile-shell}"
+
+# Touch controller of a panel, as /dev/input/eventN (Qt matches the node name)
+touch_node() {
+	for n in /sys/class/input/event*; do
+		[ "$(cat "$n/device/name" 2>/dev/null)" = "$1" ] && { echo "/dev/input/${n##*/}"; return; }
+	done
+}
+case "$OUTPUT" in
+DSI1) TOUCH=$(touch_node touch_dev); BACKLIGHT=panel0-backlight ;;
+*)    TOUCH=$(touch_node touch_sub_dev); BACKLIGHT=panel1-backlight ;;
+esac
+
+# eglfs_kms: one screen, everything else off. Qt names connectors without the
+# dash (DSI1, DSI2, Virtual1, DP1).
+KMS_CONFIG="${XDG_RUNTIME_DIR:-/tmp}/voce-shell-kms.json"
+{
+	echo '{ "device": "/dev/dri/card0", "hwcursor": false, "outputs": ['
+	for o in DSI1 DSI2 Virtual1 DP1; do
+		[ "$o" = "$OUTPUT" ] && continue
+		echo "  { \"name\": \"$o\", \"mode\": \"off\" },"
+	done
+	echo "  { \"name\": \"$OUTPUT\", \"mode\": \"current\"${TOUCH:+, \"touchDevice\": \"$TOUCH\"} }"
+	echo '] }'
+} >"$KMS_CONFIG"
+cat "$KMS_CONFIG"
+
+unset WAYLAND_DISPLAY DISPLAY
+export XDG_SESSION_TYPE=wayland
+export XDG_CURRENT_DESKTOP=Voce
+export XDG_SESSION_DESKTOP=voce
+export QT_QPA_PLATFORM=eglfs
+export QT_QPA_EGLFS_INTEGRATION=eglfs_kms
+export QT_QPA_EGLFS_KMS_CONFIG="$KMS_CONFIG"
+export QT_QPA_EGLFS_HIDECURSOR=1
+# KGSL: no implicit fences, wait for the GPU before each page flip
+export WMS_GL_FINISH=1
+export WMS_BACKLIGHT_DIR="/sys/class/backlight/$BACKLIGHT"
+# Qt's libraries carry RUNPATH=$ORIGIN (/usr/lib), which musl searches before
+# /etc/ld-musl-aarch64.path: without this Qt would load Alpine's EGL/GBM
+# instead of the KGSL Mesa (mesa-kgsl) that phoc and the apps use.
+[ -d /usr/lib/mesa-kgsl ] && export LD_LIBRARY_PATH="/usr/lib/mesa-kgsl${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+exec "$SHELL_BIN"

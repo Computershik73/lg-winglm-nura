@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Voce
+Comment=Voce mobile shell on the swivel screen
+Exec=voce-shell-session
+Type=Application
+DesktopNames=Voce

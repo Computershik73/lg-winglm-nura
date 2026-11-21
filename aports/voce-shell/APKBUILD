@@ -1,0 +1,81 @@
+# Maintainer: Computershik73 <il.mohoff2016@yandex.ru>
+# Voce shell (wayland-mobile-shell, https://github.com/VoceOS/voce-shell) as a
+# session on the LG Wing's swivel screen.
+#
+# The shell is its own Wayland compositor (QtWaylandCompositor, Qt 6, QML)
+# and draws straight to KMS through Qt's eglfs platform; it is not a client of
+# phoc. voce-shell-session sets it up for this phone: only DSI-2 (the
+# 1080x1240 swivel panel), the KGSL Mesa (mesa-kgsl), glFinish before each
+# page flip (no implicit fences on KGSL), the swivel panel's backlight and
+# touch controller. phrog lists it as "Voce" next to Phosh.
+#
+# The source is a commit of the nura-winglm branch of the shell repository.
+# The repository is private, so abuild cannot download it: make the tarball
+# with tools/voce-shell-dist.sh, which puts it into ~/distfiles on the phone.
+# (Once the repository is public, GitHub's archive of the same commit has
+# different gzip bytes: run "abuild checksum" then.)
+pkgname=voce-shell
+pkgver=0.2_git20261121
+pkgrel=0
+_commit=45d715c6b3796d8115c44d849e108c124b0d35e6
+pkgdesc="Voce mobile shell (Qt 6 Wayland compositor) as a session on the LG Wing swivel screen"
+url="https://github.com/VoceOS/voce-shell"
+arch="aarch64"
+license="GPL-3.0-or-later"
+depends="
+	cmd:rfkill
+	dbus
+	networkmanager-cli
+	qt6-qtdeclarative
+	qt6-qtsvg
+	qt6-qtwayland
+	upower
+	"
+makedepends="
+	cmake
+	qt6-qtbase-dev
+	qt6-qtdeclarative-dev
+	qt6-qtwayland-dev
+	samurai
+	"
+source="voce-shell-$_commit.tar.gz::https://github.com/VoceOS/voce-shell/archive/$_commit.tar.gz
+	voce-shell-session
+	voce.desktop
+	"
+builddir="$srcdir/voce-shell-$_commit"
+options="!check" # no tests
+
+build() {
+	cmake -B build -G Ninja \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_BUILD_TYPE=RelWithDebInfo
+	cmake --build build
+}
+
+package() {
+	DESTDIR="$pkgdir" cmake --install build
+
+	# upstream's session entry starts the bare binary: no D-Bus session, no
+	# output selection. The session goes through voce-shell-session instead.
+	rm "$pkgdir"/usr/share/wayland-sessions/wayland-mobile-shell.desktop
+	install -Dm755 "$srcdir"/voce-shell-session "$pkgdir"/usr/bin/voce-shell-session
+	install -Dm644 "$srcdir"/voce.desktop "$pkgdir"/usr/share/wayland-sessions/voce.desktop
+
+	# upstream's udev rule makes backlights and flash LEDs writable for the
+	# video group. Brightness goes through logind here (Session.SetBrightness);
+	# the Wing's torch is a Qualcomm torch + switch LED pair the shell does not
+	# drive yet, so the rule would only open up the flash LEDs.
+	rm -r "$pkgdir"/usr/lib/udev
+
+	# The shell's own dialer and organizer: only in the Voce session, Phosh
+	# has GNOME Calls (the Voce app grid ignores OnlyShowIn)
+	for f in "$pkgdir"/usr/share/applications/voce-*.desktop; do
+		echo "OnlyShowIn=Voce;" >> "$f"
+	done
+}
+
+sha512sums="
+bb67eb4a48a02ae45302f89c5c53c07b62ec8cd4acc65797313a32f4b3c8b8f28205a54aaece8f4b5aad9582b1ca2c7b94d3b6b301265a9e89665645b19ddcaa  voce-shell-45d715c6b3796d8115c44d849e108c124b0d35e6.tar.gz
+caff20f70a7ae485ba798e4ca681a2b95778373619eec2afdea09be4b8748fd9b45567258cf89ede486ea4b9876afcc4bcf893568973e6ac8af191beffb1a668  voce-shell-session
+2f9626d88965ab6b7a73965f93498fa13addd3faf7f0c387e199415f1e62fff2e6a83f535d8ac99ad0a6705107de701a0bccfc7759e473ceef8460cdc9a3beeb  voce.desktop
+"
