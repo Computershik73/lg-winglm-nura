@@ -16,6 +16,15 @@
 
 [ -f "$HOME/.config/voce-shell/env" ] && . "$HOME/.config/voce-shell/env"
 
+# Set before the session bus starts, so everything it activates sees them.
+# ":GNOME" like Phosh (Phosh:GNOME): GNOME Settings and other GNOME apps
+# refuse to run or drop features outside GNOME. xdg-desktop-portal reads
+# its backends from voce-portals.conf.
+unset WAYLAND_DISPLAY DISPLAY
+export XDG_SESSION_TYPE=wayland
+export XDG_CURRENT_DESKTOP=Voce:GNOME
+export XDG_SESSION_DESKTOP=voce
+
 if [ -z "$DBUS_SESSION_BUS_ADDRESS" ]; then
 	exec dbus-run-session -- "$0" "$@"
 fi
@@ -54,12 +63,6 @@ KMS_CONFIG="${XDG_RUNTIME_DIR:-/tmp}/voce-shell-kms.json"
 } >"$KMS_CONFIG"
 cat "$KMS_CONFIG"
 
-unset WAYLAND_DISPLAY DISPLAY
-export XDG_SESSION_TYPE=wayland
-# ":GNOME" like Phosh (Phosh:GNOME): GNOME Settings and other GNOME apps
-# refuse to run or drop features outside GNOME
-export XDG_CURRENT_DESKTOP=Voce:GNOME
-export XDG_SESSION_DESKTOP=voce
 export QT_QPA_PLATFORM=eglfs
 export QT_QPA_EGLFS_INTEGRATION=eglfs_kms
 export QT_QPA_EGLFS_KMS_CONFIG="$KMS_CONFIG"

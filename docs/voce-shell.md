@@ -85,7 +85,13 @@ phrog lists the session as **Voce** (`/usr/share/wayland-sessions/voce.desktop`,
 * sets `WMS_CLIENT_SCALE=3`: apps see an output scale of 3 like under Phosh
   and get a maximized 360x413 logical window, so GTK/libadwaita apps use
   their mobile layouts; `XDG_CURRENT_DESKTOP=Voce:GNOME` (GNOME Settings
-  refuses to start outside GNOME);
+  refuses to start outside GNOME), exported before the session bus starts;
+* `voce-portals.conf`: xdg-desktop-portal backends for the session (GTK).
+  The shell hands the environment it starts apps with to D-Bus activation
+  (`UpdateActivationEnvironment`, as gnome-session does for Phosh), so the
+  portal and DBusActivatable apps reach its socket; GTK apps then get their
+  settings from the portal (no window buttons with `button-layout=appmenu:`,
+  dark style) like under Phosh;
 * logs to `~/.cache/voce-shell/session.log`; `~/.config/voce-shell/env` is
   sourced first for tests (`VOCE_OUTPUT`, `VOCE_SHELL`, `WMS_UI_SCALE`, Qt
   variables).
@@ -118,6 +124,7 @@ logs into Voce once without the greeter (`... 'sh -s phosh'` back to Phosh).
 | Apps from the grid | ⚠️ software rendering only (see GPU above); mobile layouts at scale 3, dialogs, closed windows leave the window list |
 | Volume slider | ❌ uses `wpctl` (PipeWire); the phone uses PulseAudio, and no audio server is started in the session |
 | Calls | ❌ `voce-dialer`/`CallWatcher` only know ModemManager (CS); VoLTE goes through `winglm-volte` + GNOME Calls (SIP), not started here; no callaudiod/feedbackd/PulseAudio |
+| GNOME Settings | ✅ mobile layout, dark style, no window buttons; ❌ the Displays page (needs `org.gnome.Mutter.DisplayConfig`, which Phosh implements) |
 | Notifications | ❔ the server runs; untested |
 | On-screen keyboard | ❌ none (hardware QWERTY is the plan; no XKB layout set yet) |
 | Bluetooth / airplane toggles | ❌ `rfkill` as the user: `/dev/rfkill` is root-only; airplane mode does not touch the modem |
