@@ -75,8 +75,14 @@ phrog lists the session as **Voce** (`/usr/share/wayland-sessions/voce.desktop`,
 * sets `WMS_GL_FINISH=1` (KGSL has no implicit fences: glFinish before each
   page flip, like phoc's wlroots patch), `WMS_BACKLIGHT_DIR` =
   `panel1-backlight`, the KGSL Mesa;
+* sets `WMS_UI_SCALE=2.5` (the shell sets `QT_SCALE_FACTOR` from it for itself
+  only): the lock screen, home cards, app grid and window list are sized in
+  pixels for a 720x720 window and were tiny on the ~420 ppi panel; the parts
+  from the Figma mockup (status bar, shade, call screen) follow the width and
+  keep their designed size, apps stay at native resolution;
 * logs to `~/.cache/voce-shell/session.log`; `~/.config/voce-shell/env` is
-  sourced first for tests (`VOCE_OUTPUT`, `VOCE_SHELL`, Qt variables).
+  sourced first for tests (`VOCE_OUTPUT`, `VOCE_SHELL`, `WMS_UI_SCALE`, Qt
+  variables).
 
 Behaviour in the session:
 

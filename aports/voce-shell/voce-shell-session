@@ -11,6 +11,8 @@
 # Settings for tests (environment, e.g. in ~/.config/voce-shell/env):
 #   VOCE_OUTPUT        output to use (default DSI2; Qt names: DSI1, DSI2)
 #   VOCE_SHELL         binary to run (default /usr/bin/wayland-mobile-shell)
+#   WMS_UI_SCALE       size of the shell's interface (default 2.5 for the
+#                      ~420 ppi swivel panel; apps are not affected)
 
 [ -f "$HOME/.config/voce-shell/env" ] && . "$HOME/.config/voce-shell/env"
 
@@ -63,6 +65,9 @@ export QT_QPA_EGLFS_HIDECURSOR=1
 # KGSL: no implicit fences, wait for the GPU before each page flip
 export WMS_GL_FINISH=1
 export WMS_BACKLIGHT_DIR="/sys/class/backlight/$BACKLIGHT"
+# The swivel panel has ~420 ppi; the shell's pixel-sized screens (lock
+# screen, cards, app grid, window list) were drawn for a 720x720 window
+export WMS_UI_SCALE="${WMS_UI_SCALE:-2.5}"
 # Qt's libraries carry RUNPATH=$ORIGIN (/usr/lib), which musl searches before
 # /etc/ld-musl-aarch64.path: without this Qt would load Alpine's EGL/GBM
 # instead of the KGSL Mesa (mesa-kgsl) that phoc and the apps use.
