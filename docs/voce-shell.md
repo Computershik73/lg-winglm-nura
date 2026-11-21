@@ -7,6 +7,17 @@ session next to Phosh. Phosh stays the default and the fallback; the Voce
 session only uses the swivel screen (DSI-2, 1080x1240), the only screen the
 QWERTY prototype will have. The main screen (DSI-1) is always off in it.
 
+Target hardware: one display, the small one (the Wing's swivel panel,
+1080x1240, about 360x413 logical at scale 3); where the Wing has its main
+screen, the custom phone has a hardware QWERTY keyboard. So the shell is
+designed for that one screen (its layout is drawn for 1080 units of width)
+and a physical keyboard: no on-screen keyboard by default, keyboard focus,
+navigation and shortcuts matter. How the keyboard connects to the SoC
+(I2C/GPIO matrix/USB/Bluetooth) is not known yet. The Voce session needs no
+kernel change for this; `device-lg-winglm-small-only` (DSI-1 off on the
+kernel command line, for the greeter too) is the alternative, it needs a
+boot image flash.
+
 ## What the shell is at runtime
 
 * **Its own Wayland compositor**, not a client: `QtWaylandCompositor`
@@ -119,7 +130,10 @@ logs into Voce once without the greeter (`... 'sh -s phosh'` back to Phosh).
    `linux-dmabuf-unstable-v1` works without `EGL_WL_bind_wayland_display`
    (import dmabufs with `EGL_EXT_image_dma_buf_import`), then stop forcing
    software rendering in the app launcher.
-5. **Keyboard**: XKB layouts (`us,ru`) for the hardware QWERTY; optional
-   on-screen keyboard through `text-input`/`input-method`.
+5. **Keyboard**: XKB layouts (`us,ru`) and a layout switch for the hardware
+   QWERTY; keyboard focus and navigation in the shell (app grid, shade, lock
+   screen, call overlay) and shortcuts; on-screen keyboard only as an option
+   (`text-input`/`input-method`). Ask the user how the keyboard connects
+   once the shell work needs it.
 6. **Lock screen PIN** (PAM), torch through the Qualcomm LEDs, Bluetooth
    through BlueZ D-Bus instead of `rfkill`.
