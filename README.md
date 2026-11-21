@@ -1,9 +1,10 @@
-# LG Wing (LM-F100N, "winglm") — postmarketOS port
+# LG Wing (LM-F100N, "winglm") — postmarketOS / Nura port
 
 A postmarketOS port for the LG Wing (Snapdragon 765G / SM7250 "lito", the
 phone with the swivel screen), running Phosh on both screens with the
 downstream 4.19 kernel. Developed and daily-tested on an LM-F100N (Korean
-model) on the Russian operator MegaFon.
+model) on the Russian operator MegaFon. postmarketOS has since been renamed
+Nura; the port uses its tooling (pmbootstrap, pmaports).
 
 [Русская версия](README.ru.md)
 
@@ -45,7 +46,8 @@ model) on the Russian operator MegaFon.
 See the issue tracker for the current state; at the time of writing:
 
 * Suspend (s2idle) — not working on this kernel yet.
-* In-call volume on the speakerphone (earpiece and headset work, see below).
+* Speakerphone volume in calls — implemented (the amplifier gain, set by
+  `winglm-spk-gain`), not tested in a real call yet.
 * ACDB audio calibration (Android's echo cancellation / noise suppression
   tuning) is not loaded.
 * Cameras and the fingerprint sensor (Qualcomm CamX / TEE) — not planned.
@@ -71,6 +73,8 @@ tools/            bring-up scripts, debugging tools and prototypes
 ### Device package and kernel (on a PC, pmbootstrap)
 
 ```sh
+git clone https://github.com/Computershik73/lg-winglm-nura
+cd lg-winglm-nura
 pmbootstrap init                        # device: lg-winglm (after copying below)
 cp -r pmaports/device/testing/device-lg-winglm pmaports/device/testing/linux-lg-winglm \
       "$(pmbootstrap config aports)/device/testing/"

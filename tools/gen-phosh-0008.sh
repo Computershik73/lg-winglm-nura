@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
-S=$HOME/lg-wing-port/tools
-WS=$HOME/lg-wing-port/pmaports/temp
+S=$HOME/lg-winglm-nura/tools
+WS=$HOME/lg-winglm-nura/pmaports/temp
 UPHOSH=~/phosh-src/phosh-0.58.0
 OUT=$WS/phosh/0008-lockscreen-manager-forget-a-closed-lockscreen.patch
 W=$(mktemp -d ~/phosh-src/lockd.XXXX)

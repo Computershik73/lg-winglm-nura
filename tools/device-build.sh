@@ -2,7 +2,7 @@
 # Build device-lg-winglm with pmbootstrap (noarch scripts only) and copy the apks to the phone
 set -e
 REL=$1
-W=$HOME/lg-wing-port/pmaports/device/testing/device-lg-winglm
+W=$HOME/lg-winglm-nura/pmaports/device/testing/device-lg-winglm
 A=$(pmbootstrap config aports)/device/testing/device-lg-winglm
 cp -r "$W"/. "$A"/
 pmbootstrap checksum device-lg-winglm >/dev/null 2>&1

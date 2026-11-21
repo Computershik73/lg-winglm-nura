@@ -1,9 +1,9 @@
 #!/bin/bash
-# commit the Calls dial pad work to ~/lg-wing-port (only our own changes)
+# commit the Calls dial pad work to ~/lg-winglm-nura (only our own changes)
 set -e
-SP=$HOME/lg-wing-port/tools
-W=$HOME/lg-wing-port/pmaports/device/testing/device-lg-winglm
-cd ~/lg-wing-port
+SP=$HOME/lg-winglm-nura/tools
+W=$HOME/lg-winglm-nura/pmaports/device/testing/device-lg-winglm
+cd ~/lg-winglm-nura
 D=pmaports/device/testing/device-lg-winglm
 
 # 1. Alpine fork: the aport as built on the phone

@@ -1,8 +1,8 @@
 #!/bin/bash
 # Generate phoc 0005/0006 and phosh 0004/0005/0006 against upstream, check they apply on top of the aports' patches
 set -e
-S=$HOME/lg-wing-port/tools
-WS=$HOME/lg-wing-port/pmaports/temp
+S=$HOME/lg-winglm-nura/tools
+WS=$HOME/lg-winglm-nura/pmaports/temp
 UPHOC=~/phosh-src/phoc-0.58.0
 UPHOSH=~/phosh-src/phosh-0.58.0
 H=$(mktemp -d)

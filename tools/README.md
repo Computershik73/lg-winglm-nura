@@ -3,7 +3,7 @@
 Scripts written while bringing the port up. They are working notes rather
 than polished tools: most of them were run from WSL on the PC against the
 phone over USB networking (`ssh user@172.16.42.1`, the script sent on stdin)
-and assume this repository at `$HOME/lg-wing-port`.
+and assume this repository at `$HOME/lg-winglm-nura`.
 
 Useful ones:
 

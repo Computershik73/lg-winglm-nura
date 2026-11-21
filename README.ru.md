@@ -1,9 +1,10 @@
-# LG Wing (LM-F100N, «winglm») — порт postmarketOS
+# LG Wing (LM-F100N, «winglm») — порт postmarketOS / Nura
 
 Порт postmarketOS на LG Wing (Snapdragon 765G / SM7250 «lito», телефон с
 поворотным экраном): Phosh на обоих экранах, штатное ядро 4.19 из Android.
 Разрабатывается и проверяется в повседневной работе на LM-F100N (корейская
-модель) в сети МегаФон.
+модель) в сети МегаФон. postmarketOS с тех пор переименован в Nura; порт
+использует его инструменты (pmbootstrap, pmaports).
 
 [English version](README.md)
 
@@ -46,8 +47,8 @@
 Актуальное состояние — в issues; на момент написания:
 
 * Сон (s2idle) — на этом ядре пока не работает.
-* Громкость в звонке на громкой связи (разговорный динамик и гарнитура
-  работают, см. выше).
+* Громкость на громкой связи в звонке — сделано (усиление усилителя через
+  `winglm-spk-gain`), в настоящем звонке ещё не проверено.
 * Калибровка звука ACDB (настройки эхоподавления и шумоподавления из Android)
   не загружается.
 * Камеры и сканер отпечатков (Qualcomm CamX / TEE) — не планируются.
@@ -73,6 +74,8 @@ tools/            скрипты запуска, отладки и протот�
 ### Пакет устройства и ядро (на ПК, pmbootstrap)
 
 ```sh
+git clone https://github.com/Computershik73/lg-winglm-nura
+cd lg-winglm-nura
 pmbootstrap init                        # устройство: lg-winglm (после копирования ниже)
 cp -r pmaports/device/testing/device-lg-winglm pmaports/device/testing/linux-lg-winglm \
       "$(pmbootstrap config aports)/device/testing/"

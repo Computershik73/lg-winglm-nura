@@ -1,6 +1,6 @@
 #!/bin/bash
 set -e
-K=$HOME/lg-wing-port/pmaports/device/testing/linux-lg-winglm
+K=$HOME/lg-winglm-nura/pmaports/device/testing/linux-lg-winglm
 T=$(mktemp -d); mkdir -p $T/a/sound/soc $T/b/sound/soc
 cp /home/user/winglm/kernel/sound/soc/soc-ops.c $T/a/sound/soc/; cp $T/a/sound/soc/soc-ops.c $T/b/sound/soc/
 python3 - $T/b/sound/soc/soc-ops.c <<'PY'

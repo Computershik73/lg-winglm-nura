@@ -2,10 +2,10 @@
 # one git repo for the whole LG Wing port: pmaports packages, the Alpine
 # package forks built on the phone, and the tools/prototypes
 set -e
-SP=$HOME/lg-wing-port/tools
-W=$HOME/lg-wing-port/pmaports
+SP=$HOME/lg-winglm-nura/tools
+W=$HOME/lg-winglm-nura/pmaports
 PMA=$HOME/.local/var/pmbootstrap/cache_git/pmaports
-R=$HOME/lg-wing-port
+R=$HOME/lg-winglm-nura
 
 # leave pmbootstrap's clone as it was (untracked files, branch main)
 cd $PMA

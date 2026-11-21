@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
-S=$HOME/lg-wing-port/tools
-T=$HOME/lg-wing-port/pmaports/temp/callaudiod
+S=$HOME/lg-winglm-nura/tools
+T=$HOME/lg-winglm-nura/pmaports/temp/callaudiod
 OUT=$T/0001-pulse-profile-per-device-and-dsp-voice-mute.patch
 cd ~/winglm/cad
 rm -rf a b; mkdir -p a/src b/src

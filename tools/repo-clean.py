@@ -1,11 +1,11 @@
 #!/usr/bin/python3
-"""Make ~/lg-wing-port/tools independent of this machine's paths."""
+"""Make ~/lg-winglm-nura/tools independent of this machine's paths."""
 import os
 import re
 import subprocess
 
-R = os.path.expanduser('~/lg-wing-port')
-SCRATCHPAD = '$HOME/lg-wing-port/tools'
+R = os.path.expanduser('~/lg-winglm-nura')
+SCRATCHPAD = '$HOME/lg-winglm-nura/tools'
 SCRATCH_ROOT = ('/mnt/c/MICD/profiles/d19bc6bc-1286-4caf-9fe1-c0fc5c4175a3/scratch-workspaces/'
                 '7f4c33e3-713d-4694-9eaa-57d6e1528aa0/4559bdd3-f3f8-4a6b-afb9-1e62cbd0b548/'
                 'scratch-2026-11-13-581527')
@@ -20,8 +20,8 @@ for f in files:
                       "open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'elfx.py'))")
         if 'import os' not in s:
             s = s.replace('import sys', 'import os\nimport sys', 1)
-    s = s.replace(SCRATCHPAD, '$HOME/lg-wing-port/tools')
-    s = s.replace(SCRATCH_ROOT, '$HOME/lg-wing-port')
+    s = s.replace(SCRATCHPAD, '$HOME/lg-winglm-nura/tools')
+    s = s.replace(SCRATCH_ROOT, '$HOME/lg-winglm-nura')
     open(p, 'w').write(s)
     print('cleaned', f)
 

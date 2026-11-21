@@ -1,8 +1,8 @@
 #!/bin/bash
 # Generate phosh 0007 (home bar on the second screen) on top of 0006, check the whole series applies
 set -e
-S=$HOME/lg-wing-port/tools
-WS=$HOME/lg-wing-port/pmaports/temp
+S=$HOME/lg-winglm-nura/tools
+WS=$HOME/lg-winglm-nura/pmaports/temp
 UPHOSH=~/phosh-src/phosh-0.58.0
 OUT=$WS/phosh/0007-home-bar-on-second-screen.patch
 W=$(mktemp -d ~/phosh-src/swipe.XXXX)

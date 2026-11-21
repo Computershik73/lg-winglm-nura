@@ -1,8 +1,8 @@
 #!/bin/bash
 # Regenerate phosh patches 0002 and 0003 from the upstream source in ~/phosh-src
 set -e
-S=$HOME/lg-wing-port/tools
-P=$HOME/lg-wing-port/pmaports/temp/phosh
+S=$HOME/lg-winglm-nura/tools
+P=$HOME/lg-winglm-nura/pmaports/temp/phosh
 U=~/phosh-src/phosh-0.58.0/src
 
 # 0002: keypad (keep the existing header)

@@ -2,7 +2,7 @@
 # Build linux-lg-winglm with pmbootstrap, keep the workspace APKBUILD's checksums in sync
 set -e
 REL=${1:?pkgrel}
-W=$HOME/lg-wing-port/pmaports/device/testing/linux-lg-winglm
+W=$HOME/lg-winglm-nura/pmaports/device/testing/linux-lg-winglm
 A=$(pmbootstrap config aports)/device/testing/linux-lg-winglm
 for f in "$W"/*; do sed 's/\r$//' "$f" > "$A/$(basename $f)"; done
 pmbootstrap checksum linux-lg-winglm >/dev/null 2>&1
