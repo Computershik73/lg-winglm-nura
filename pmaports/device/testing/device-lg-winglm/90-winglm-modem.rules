@@ -7,6 +7,9 @@ SUBSYSTEM=="net", KERNEL=="rmnet_ipa0", ENV{ID_MM_QCOM_SOC}="1", ENV{ID_MM_PHYSD
 # it behaves like the mainline "ipa" driver plus the downstream ioctls.
 # Mux ids from 4 on: winglm-volte's IMS PDN uses mux 2.
 SUBSYSTEM=="net", KERNEL=="rmnet_ipa0", ENV{ID_MM_KERNEL_DRIVER}="ipa", ENV{ID_MM_QCOM_IPA_DOWNSTREAM}="1", ENV{ID_MM_INITIAL_QMAP_MUX_ID}="4"
+# ModemManager's rmnet links on it are virtual devices too: let them through
+# its port filter (they are then grabbed as links of rmnet_ipa0)
+SUBSYSTEM=="net", KERNEL=="qmapmux*", ENV{ID_MM_QCOM_SOC}="1", ENV{ID_MM_PHYSDEV_UID}="qcom-soc"
 
 # rmtfs looks for the modem's remote storage memory as qcom_rmtfs_uio1
 SUBSYSTEM=="uio", ATTR{name}=="rmtfs", SYMLINK+="qcom_rmtfs_uio1"

@@ -3,7 +3,7 @@
 # plus the postmarketOS fragment in pmos.config (see tools/gen-config.sh)
 pkgname=linux-lg-winglm
 pkgver=4.19.325
-pkgrel=7
+pkgrel=8
 pkgdesc="LG Wing kernel fork"
 arch="aarch64"
 _carch="arm64"
@@ -47,6 +47,7 @@ source="
 	0004-bluetooth-hci_h4-qualcomm-in-band-sleep.patch
 	0005-asoc-ops-fix-bounds-check-for-sx-controls.patch
 	0006-asoc-ops-dont-modify-platform-max-when-reading-state.patch
+	0007-ipv6-dont-restart-a-finished-single-table-dump.patch
 "
 
 builddir="$srcdir/$_repository-$_commit"
@@ -101,4 +102,5 @@ f1d7407eae76bd3617bfa073531d9752f000e1ce2eaf46d759479e6eb65c5d8d9b6b7b0c668a2b98
 56e4914f8f47ae2beac75a1348d0aa8147be7e8054f88eecb0d2911eb89785ef813bf4fff50a4a1cf5a1a4d9a575bc12b5a84d747ec8999a88642e1098dcd69c  0004-bluetooth-hci_h4-qualcomm-in-band-sleep.patch
 e21abdea76f90cf7d52afeb0b8bf20314b66fc1a8b70e34064228c1c6dfdf61e6ba0b049241358e2f3e4c4e5a9cbf2652773b0731388ae535ef0ab3b5218db25  0005-asoc-ops-fix-bounds-check-for-sx-controls.patch
 b597f7f5a895ff0eeebbdc99b92fe072337cb6595c9ded080c48d857ded87fe96921f9f5927f07ec9a07cd5724e103e87f7c3e2a34fb6731280e7db1707ee771  0006-asoc-ops-dont-modify-platform-max-when-reading-state.patch
+640d2f1396c3684532aacc79b6c9d4171bd5576c97b3206645dea4203b5d8417fd538432768746c0c9df21cfc275cf7f40ccb636c497f8c6b58f336ea0847f7c  0007-ipv6-dont-restart-a-finished-single-table-dump.patch
 "

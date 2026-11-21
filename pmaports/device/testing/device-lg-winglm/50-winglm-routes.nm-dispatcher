@@ -16,8 +16,10 @@ case "$IFACE" in
 esac
 [ "${IP4_NUM_ADDRESSES:-0}" -gt 0 ] || exit 0
 
+# NetworkManager's own metrics: Wi-Fi before mobile data
 case "$IFACE" in
 	wlan*) metric=600 ;;
+	qmapmux*) metric=700 ;;
 	*) metric=100 ;;
 esac
 
@@ -33,5 +35,11 @@ net=$(ipcalc -n "$cidr" 2>/dev/null | sed -n 's/^NETWORK=//p')
 ip route replace "$net/$plen" dev "$IFACE" proto static scope link src "$addr" metric $metric
 if [ -n "$gw" ] && [ "$gw" != "0.0.0.0" ]; then
 	ip route replace default via "$gw" dev "$IFACE" proto static metric $metric
+else
+	case "$IFACE" in
+		# mobile data (ModemManager's rmnet links): raw IP point to point,
+		# no gateway; NetworkManager's device route fails like the others
+		qmapmux*) ip route replace default dev "$IFACE" proto static metric $metric ;;
+	esac
 fi
 exit 0

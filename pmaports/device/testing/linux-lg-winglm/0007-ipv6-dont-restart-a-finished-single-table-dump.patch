@@ -1,0 +1,27 @@
+From: winglm port
+Subject: [PATCH] ipv6: don't restart a finished dump of a single table
+
+A route dump restricted to one table ("ip -6 route show table main", and
+"ip -6 route show dev X", which implies the main table) never ended: once
+fib6_dump_table() had walked the whole table, inet6_dump_fib() returned
+the skb length, netlink called it again, and with the walker idle the next
+fib6_dump_table() started a new walk from the root. The same routes came
+back forever and iproute2 spun a CPU core (pmOS's routewrangler runs
+exactly this dump). Remember in cb->args[0] that the table is done, as
+upstream's inet6_dump_fib() does.
+---
+--- a/net/ipv6/ip6_fib.c
++++ b/net/ipv6/ip6_fib.c
+@@ -635,7 +635,11 @@
+ 			return -ENOENT;
+ 		}
+
+-		res = fib6_dump_table(tb, skb, cb);
++		if (!cb->args[0]) {
++			res = fib6_dump_table(tb, skb, cb);
++			if (!res)
++				cb->args[0] = 1;
++		}
+ 		goto out;
+ 	}
+
