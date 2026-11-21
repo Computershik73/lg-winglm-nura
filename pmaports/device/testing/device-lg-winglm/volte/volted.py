@@ -147,11 +147,14 @@ class Manager:
         self.fallback_route(True)
         self.write_status()
         GLib.timeout_add_seconds(10, self.write_status)
+        GLib.timeout_add_seconds(5, self.fallback_check)
 
     # GNOME Calls only keeps a SIP account online while some default route
-    # exists; without Wi-Fi (mobile data is not up) it would go offline and
+    # exists; with neither Wi-Fi nor mobile data it would go offline and
     # VoLTE with it. A last-resort default route into a dummy interface keeps
-    # it registered here; any real default route has a far lower metric.
+    # it registered here, but only while there is no other uplink: pmOS's
+    # routewrangler takes it for one and then keeps mobile data's routes out
+    # of the main table (mobile data unusable without Wi-Fi).
     FALLBACK_IF, FALLBACK_IP = 'volte0', '198.18.0.1'
 
     def fallback_route(self, on):
@@ -161,9 +164,29 @@ class Manager:
                 run('ip link add %s type dummy' % self.FALLBACK_IF)
             run('ip addr replace %s/32 dev %s' % (self.FALLBACK_IP, self.FALLBACK_IF))
             run('ip link set %s up' % self.FALLBACK_IF)
-            run('ip route replace default dev %s src %s metric 50000' % (self.FALLBACK_IF, self.FALLBACK_IP))
+            self.fallback_check()
         else:
             run('ip link del %s' % self.FALLBACK_IF)
+
+    def fallback_check(self):
+        """dummy default route only while nothing else is an uplink: no other
+        default route in the main table and no mobile data link with an
+        address (routewrangler may hold its routes in another table)"""
+        from imsreg2 import run
+        try:
+            devs = re.findall(r'\bdev (\S+)', run('ip -4 route show table main default').stdout)
+            have = self.FALLBACK_IF in devs
+            other = any(d != self.FALLBACK_IF for d in devs) or \
+                bool(re.search(r'\bqmapmux\S*\s+inet ', run('ip -4 -o addr show').stdout))
+            if other and have:
+                run('ip route del default dev %s' % self.FALLBACK_IF)
+                log('another uplink is up: dummy default route removed')
+            elif not other and not have:
+                run('ip route replace default dev %s src %s metric 50000' % (self.FALLBACK_IF, self.FALLBACK_IP))
+                log('no uplink: dummy default route for GNOME Calls added')
+        except Exception as e:
+            log('fallback route check failed: %s' % e)
+        return True
 
     # =============================================================== IMS link life cycle
     # IMS (and with it VoLTE for incoming calls) is only up while GNOME Calls

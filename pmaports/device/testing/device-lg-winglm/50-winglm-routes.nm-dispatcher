@@ -33,13 +33,10 @@ net=$(ipcalc -n "$cidr" 2>/dev/null | sed -n 's/^NETWORK=//p')
 [ -n "$net" ] || exit 0
 
 ip route replace "$net/$plen" dev "$IFACE" proto static scope link src "$addr" metric $metric
+# (mobile data: NetworkManager's own default route works, and pmOS's
+# routewrangler moves it between its own table and main as Wi-Fi comes and
+# goes; don't add another one here)
 if [ -n "$gw" ] && [ "$gw" != "0.0.0.0" ]; then
 	ip route replace default via "$gw" dev "$IFACE" proto static metric $metric
-else
-	case "$IFACE" in
-		# mobile data (ModemManager's rmnet links): raw IP point to point,
-		# no gateway; NetworkManager's device route fails like the others
-		qmapmux*) ip route replace default dev "$IFACE" proto static metric $metric ;;
-	esac
 fi
 exit 0

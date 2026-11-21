@@ -43,11 +43,12 @@ model) on the Russian operator MegaFon.
 See the issue tracker for the current state; at the time of writing:
 
 * Suspend (s2idle) — not working on this kernel yet.
-* In-call volume buttons — need kernel r8 (`linux-lg-winglm`, patches
-  0005/0006; r8 is not flashed on the test phone yet). The session helper
-  `winglm-call-volume` maps the volume keys to the earpiece/headset gain;
-  the speakerphone is not covered.
-* VoLTE and mobile data at the same time — not tested yet.
+* In-call volume buttons — kernel r8 accepts the codec gains now; the
+  session helper `winglm-call-volume` maps the volume keys to the
+  earpiece/headset gain (not tested in a call yet; the speakerphone is not
+  covered).
+* A VoLTE call while mobile data is up — IMS stays registered next to mobile
+  data, but no call was tested that way yet.
 * ACDB audio calibration (Android's echo cancellation / noise suppression
   tuning) is not loaded.
 * Cameras and the fingerprint sensor (Qualcomm CamX / TEE) — not planned.
