@@ -33,6 +33,8 @@ model) on the Russian operator MegaFon.
 | Voice calls 2G/3G (CS) | ✅ |
 | VoLTE (outgoing and incoming, AMR/AMR-WB), audio in the modem DSP | ✅ (own IMS client, see [docs/volte.md](docs/volte.md)) |
 | VoLTE: DTMF (voice menus), mute, ringback tone | ✅ |
+| VoLTE calls while mobile data is up | ✅ |
+| Volume keys during calls (earpiece, headset) | ✅ (kernel r8, `winglm-call-volume`) |
 | Calls go over 2G/3G when VoLTE is not available | ✅ |
 | Calls: dial pad on the swivel screen while it is open | ✅ (GNOME Calls fork) |
 | Brightness of both panels | ✅ |
@@ -43,12 +45,7 @@ model) on the Russian operator MegaFon.
 See the issue tracker for the current state; at the time of writing:
 
 * Suspend (s2idle) — not working on this kernel yet.
-* In-call volume buttons — kernel r8 accepts the codec gains now; the
-  session helper `winglm-call-volume` maps the volume keys to the
-  earpiece/headset gain (not tested in a call yet; the speakerphone is not
-  covered).
-* A VoLTE call while mobile data is up — IMS stays registered next to mobile
-  data, but no call was tested that way yet.
+* In-call volume on the speakerphone (earpiece and headset work, see below).
 * ACDB audio calibration (Android's echo cancellation / noise suppression
   tuning) is not loaded.
 * Cameras and the fingerprint sensor (Qualcomm CamX / TEE) — not planned.
