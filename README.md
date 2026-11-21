@@ -31,6 +31,8 @@ model) on the Russian operator MegaFon.
 | SMS, USSD | ❔ untested |
 | Voice calls 2G/3G (CS) | ✅ |
 | VoLTE (outgoing and incoming, AMR/AMR-WB), audio in the modem DSP | ✅ (own IMS client, see [docs/volte.md](docs/volte.md)) |
+| VoLTE: DTMF (voice menus), mute, ringback tone | ✅ |
+| Calls go over 2G/3G when VoLTE is not available | ✅ |
 | Calls: dial pad on the swivel screen while it is open | ✅ (GNOME Calls fork) |
 | Brightness of both panels | ✅ |
 | Settings → Displays with the swivel closed | ✅ |
@@ -43,8 +45,6 @@ See the issue tracker for the current state; at the time of writing:
 * Mobile data for the user (internet over LTE) — the data path works
   (used for IMS), but NetworkManager/ModemManager do not manage it yet.
 * In-call volume buttons — need kernel r6 (`linux-lg-winglm`, patch 0005).
-* VoLTE: DTMF and the mute button with media in the modem; automatic fallback
-  to 2G/3G when IMS is not registered.
 * ACDB audio calibration (Android's echo cancellation / noise suppression
   tuning) is not loaded.
 * Cameras and the fingerprint sensor (Qualcomm CamX / TEE) — not planned.

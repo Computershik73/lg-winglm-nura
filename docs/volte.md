@@ -77,6 +77,16 @@ password into the session keyring).
   Calls rings.
 * Codecs offered: AMR-WB and AMR, octet-aligned and bandwidth-efficient,
   telephone-event 8/16 kHz. MegaFon chose AMR-NB in all tested calls.
+* No VoLTE, no account: while IMS is not registered the daemon answers
+  Calls' `REGISTER` with `503` (`Retry-After: 30`). The SIP account goes
+  offline and Calls dials over ModemManager (2G/3G) instead. Calls patch
+  0002 registers again every 30 s, and the account comes back once IMS is up.
+  Registrations are granted for 60 s only, so Calls notices quickly when IMS
+  goes away.
+* DTMF: Calls patch 0003 sends keypad presses as SIP INFO
+  (`application/dtmf-relay`); see SEND_DTMF below.
+* Mute: callaudiod (fork) mutes the DSP voice stream ("Voice Tx Mute"),
+  which also covers calls with media in the modem.
 
 ## 4. Media in the modem ("MMPF")
 
@@ -154,7 +164,14 @@ MegaFon), EVS parameters in between.
 ### Requests
 
 24 bytes: `u32 request, u32 mode, …0`. **START = 2, STOP = 3**, PAUSE 4,
-RESUME 5, SEND_DTMF 21 (140 bytes, not used yet), RESET 28.
+RESUME 5, SEND_DTMF 21, RESET 28.
+
+**SEND_DTMF** is 140 bytes: `u32 21, u32 0 (TX), u32 0`, then the key as a
+NUL-terminated string in a 128-byte field. The engine picks the tone length
+itself and sends RFC 4733 telephone-events with the payload type set in
+TRANSPORT (bytes 24/28). GNOME Calls sends each keypad press to the daemon
+as SIP INFO (`application/dtmf-relay`, Calls patch 0003); the daemon turns
+it into this request.
 
 ### A call
 
