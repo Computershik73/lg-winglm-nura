@@ -1,0 +1,19 @@
+#!/sbin/openrc-run
+# LG Wing: WCN3991 Bluetooth firmware over the UART, then hci0 for BlueZ
+supervisor=supervise-daemon
+name="LG Wing Bluetooth"
+command=/usr/bin/winglm-bt
+output_log=/var/log/winglm-bt.log
+error_log=/var/log/winglm-bt.log
+respawn_delay=3
+respawn_max=5
+respawn_period=600
+
+depend() {
+	need msm-firmware-loader
+	before bluetooth
+}
+
+start_pre() {
+	modprobe -q hci_uart 2>/dev/null || true
+}

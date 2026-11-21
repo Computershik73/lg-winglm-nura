@@ -1,0 +1,152 @@
+# Contributor: Bart Ribbers <bribbers@disroot.org>
+# Contributor: Danct12 <danct12@disroot.org>
+# Contributor: Newbyte <newbyte@disroot.org>
+# Contributor: Rasmus Thomsen <oss@cogitri.dev>
+maintainer="team/phosh <newbyte@postmarketos.org>"
+pkgname=phosh
+pkgver=0.58.0
+# winglm fork of Alpine community/phosh: multi-panel fixes (0001),
+# lockscreen keypad on the second screen when the main one is landscape (0002),
+# a hotplugged monitor announced (and shielded) only once (0003), optional
+# portrait lock screen (0004), move windows to the other screen (0005, needs
+# phoc with phosh-private v9), app grid on the second screen (0006) and a
+# home bar there for the overview swipe (0007), no dangling lockscreen when
+# the compositor closes it (0008)
+pkgrel=27
+pkgdesc="Wayland shell for GNOME on mobile devices"
+# armhf: blocked by gnome-shell-schemas
+arch="all !armhf"
+url="https://gitlab.gnome.org/World/Phosh/phosh"
+license="GPL-3.0-only"
+triggers="$pkgname.trigger=/usr/lib/phosh/plugins/prefs"
+depends="
+	$pkgname-schemas
+	adwaita-fonts
+	adwaita-icon-theme
+	bash
+	dbus-x11
+	dbus:org.freedesktop.Secrets
+	desktop-file-utils
+	gnome-control-center
+	gnome-session
+	gnome-settings-daemon
+	gnome-shell-schemas
+	gsettings-desktop-schemas
+	phoc
+	phosh-keyboard
+	polkit-elogind
+	xwayland
+	"
+makedepends="
+	appstream-dev
+	callaudiod-dev
+	elogind-dev
+	evince-dev
+	evolution-data-server-dev
+	feedbackd-dev
+	gcr-dev
+	gettext-dev
+	glib-dev
+	gmobile-dev
+	gnome-bluetooth-dev
+	gnome-desktop-dev
+	gtk+3.0-dev
+	libadwaita-dev
+	libgudev-dev
+	libhandy1-dev
+	libsecret-dev
+	linux-pam-dev
+	meson
+	modemmanager-dev
+	networkmanager-dev
+	polkit-elogind-dev
+	pulseaudio-dev
+	py3-docutils
+	qrcodegen-dev
+	upower-dev
+	wayland-dev
+	wayland-protocols
+	"
+checkdepends="xvfb-run xmlstarlet"
+options="!check"
+# the ordering here is important - libphosh split functions need to run first to move the libphosh-0
+# headers/pkgconfig/lib into the libphosh packages, before the top level -dev package gobbles
+# up the rest.
+subpackages="
+	libphosh:libs
+	libphosh-dev:libphosh_dev
+	$pkgname-dbg
+	$pkgname-dev
+	$pkgname-doc
+	$pkgname-lang
+	$pkgname-portalsconf::noarch
+	$pkgname-schemas::noarch
+	$pkgname-systemd
+	"
+source="https://sources.phosh.mobi/releases/phosh/phosh-${pkgver/_/.}.tar.xz
+	0001-multi-panel-lockscreen-bg-largest-builtin.patch
+	0002-lockscreen-keypad-on-second-screen-in-landscape.patch
+	0003-monitor-manager-announce-a-monitor-only-once.patch
+	0004-rotation-manager-force-portrait-setting.patch
+	0005-overview-move-windows-to-the-other-screen.patch
+	0006-home-app-grid-on-second-screen.patch
+	0007-home-bar-on-second-screen.patch
+	0008-lockscreen-manager-forget-a-closed-lockscreen.patch
+	"
+builddir="$srcdir/$pkgname-${pkgver/_/.}"
+somask="libphoshsearch.so"
+
+prepare() {
+	default_prepare
+	sed -i 's/\.rc/_rc/' meson.build
+}
+
+build() {
+	# phoc tests need a running Wayland compositor
+	abuild-meson \
+		-Db_lto=false \
+		-Dphoc_tests=disabled \
+		-Dtests=false \
+		-Dman=true \
+		-Dbindings-lib=true \
+		. output
+	meson compile -C output
+}
+
+check() {
+	xvfb-run -a meson test --print-errorlogs -C output
+}
+
+package() {
+	DESTDIR="$pkgdir/" meson install --no-rebuild --skip-subprojects -C output
+}
+
+portalsconf() {
+	install_if="$pkgname=$pkgver-r$pkgrel xdg-desktop-portal>=1.17.1"
+	amove usr/share/xdg-desktop-portal/phosh-portals.conf
+}
+
+libphosh_dev() {
+	amove usr/include/libphosh-*
+	amove usr/lib/libphosh-*.so
+	amove usr/lib/pkgconfig/libphosh-*.pc
+}
+
+schemas() {
+	pkgdesc="$pkgdesc (schemas)"
+	depends=
+
+	amove usr/share/glib-2.0/schemas
+}
+
+sha512sums="
+df60a8e161b271bf14c477d589d00759e06b003f8ed0fb21120eff9ddfd1880d9bf0b38867376b7d6d5035147d7940b7645efa60b7efc6f0a9d646fbbf03e95d  phosh-0.58.0.tar.xz
+32e8d9fe89d68b7687d6d1993857f04008073b9d5a906f6f4577a64d224969ed40d54a491862e78bd54f007532b49105502d9ee220921d67b6dc4f9204bc4b02  0001-multi-panel-lockscreen-bg-largest-builtin.patch
+8a4f42eb325946ce67114a81e076c8df9cd0a0431439afc54bac805d7ed884ed72cd1e0af9d32f601a9f119e5dc9a588c6ed191486c06e9389e6e2869d208784  0002-lockscreen-keypad-on-second-screen-in-landscape.patch
+ae28ab3e2fac726d69cd03f24333fb257439071c5533ee8cea7a14468d39711bd5134599e9b00ee0b9c492029433c7767b832f7a13c4c9e0d0f09fb3b39c5124  0003-monitor-manager-announce-a-monitor-only-once.patch
+5738b85b3e7608a13584e9fa417f8f6974d5dedf8e8a847ae4dd1ee6071cd6e980d69306ccc8c0484ca49fed7860e4b4d8a3e5d0621f9d19544bddb858434dcf  0004-rotation-manager-force-portrait-setting.patch
+4df3335dfc902c6f3630c0a78b8736952063fd1724e6c050aad740798d238b62528deee4a72652ecc63485e53b65e61b95d1dd66c337afce02592038366d06e1  0005-overview-move-windows-to-the-other-screen.patch
+78bb018de821842b58cc86c4c209ade0f935fe1056ff9ed8e0ae368a220227304bdfd4fdeb7e4f39979f5747d865c342c760bdbc8fb786c71d8031b911eaeaa4  0006-home-app-grid-on-second-screen.patch
+9a1b0e506a7d0a2282beb4194d34bca5db04483dbffa7f6eb349cc2f5968b1d9bfbe6e4feda2e52f0275dc3dbd8d7dc31df85a053797c86653bff9f3dabc9d28  0007-home-bar-on-second-screen.patch
+02755475fa982ddd03e1e22c152871a1c5c5d915cdf302a062e6350bec722db23a6a8a7527741937a26237efb17ed52742ce41a75c4f5d4896bd96dd1273a1e0  0008-lockscreen-manager-forget-a-closed-lockscreen.patch
+"

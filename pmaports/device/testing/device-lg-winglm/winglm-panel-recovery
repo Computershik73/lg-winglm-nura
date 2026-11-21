@@ -1,0 +1,187 @@
+#!/bin/sh
+# LG Wing: bring back a DSI panel that the downstream SDE driver gave up on.
+#
+# Both command-mode panels run without an ESD check (stock dtbo). When a frame
+# times out because the panel sent no TE ("failed wait_for_idle: -110"), the
+# driver sets esd_recovery_pending and rejects every kickoff afterwards
+# ("ESD recovery already pending") until the CRTC is disabled and enabled
+# again. Android's HWC does that on DRM_EVENT_PANEL_DEAD; here the same
+# off -> on cycle goes through the wlroots output-management protocol, so it
+# works with any wlroots compositor (phoc, sway, cage).
+
+STATE=/sys/kernel/debug/dri/0/state
+THRESHOLD=${THRESHOLD:-4}   # symptom lines ...
+WINDOW=${WINDOW:-3}         # ... within this many seconds trigger a recovery
+COOLDOWN=${COOLDOWN:-20}    # seconds between two recoveries
+OFF_WAIT=${OFF_WAIT:-3}     # the disable commit must settle before enabling
+LOGFILE=${LOGFILE:-/var/log/winglm-panel-recovery.log}
+
+log() {
+	logger -t winglm-panel-recovery -- "$*"
+	echo "$(date '+%F %T') $*" >> "$LOGFILE"
+	echo "$*"
+}
+
+uptime_s() {
+	cut -d. -f1 /proc/uptime
+}
+
+# DRM connector id -> name (e.g. 48 -> DSI-2)
+conn_name() {
+	[ -r "$STATE" ] || return 1
+	sed -n "s/^connector\[$1\]: //p" "$STATE" | head -n1
+}
+
+# print "runtime_dir socket" for every live Wayland compositor socket
+wl_sessions() {
+	for d in /run/user/* /tmp/xdg-*; do
+		[ -d "$d" ] || continue
+		for s in "$d"/wayland-[0-9]*; do
+			case "$s" in *.lock) continue ;; esac
+			[ -S "$s" ] && echo "$d ${s##*/}"
+		done
+	done
+}
+
+randr() {
+	_dir=$1 _sock=$2
+	shift 2
+	XDG_RUNTIME_DIR=$_dir WAYLAND_DISPLAY=$_sock wlr-randr "$@"
+}
+
+# enabled outputs of one session, one name per line
+enabled_outputs() {
+	randr "$1" "$2" 2>/dev/null | awk '
+		/^[^ ]/ { name = $1 }
+		/^  Enabled: yes/ { print name }'
+}
+
+# "--pos X,Y --scale S --transform T" of an enabled output. A disabled head
+# reports none of them, so a plain --on would bring the output back at 0,0
+# with scale 1 and no rotation.
+output_geometry() {
+	randr "$1" "$2" 2>/dev/null | awk -v out="$3" '
+		/^[^ ]/ { cur = $1 }
+		cur == out && /^  Position:/ { pos = $2 }
+		cur == out && /^  Scale:/ { scale = $2 }
+		cur == out && /^  Transform:/ { tr = $2 }
+		END {
+			if (pos != "") printf "--pos %s ", pos
+			if (scale != "") printf "--scale %s ", scale
+			if (tr != "") printf "--transform %s", tr
+		}'
+}
+
+cycle_output() {
+	_dir=$1 _sock=$2 _out=$3
+	_geo=$(output_geometry "$_dir" "$_sock" "$_out")
+	log "recovering $_out ($_dir/$_sock) $_geo"
+	randr "$_dir" "$_sock" --output "$_out" --off
+	sleep "$OFF_WAIT"
+	for i in 1 2 3 4 5 6; do
+		# shellcheck disable=SC2086
+		if randr "$_dir" "$_sock" --output "$_out" --on $_geo 2>/dev/null; then
+			log "$_out back on (attempt $i)"
+			return 0
+		fi
+		sleep 1
+	done
+	log "$_out did not come back"
+	return 1
+}
+
+# $1: connector name, or "all" for every enabled DSI output
+recover() {
+	_found=0
+	wl_sessions | while read -r dir sock; do
+		for out in $(enabled_outputs "$dir" "$sock"); do
+			case "$out" in DSI-*) ;; *) continue ;; esac
+			[ "$1" = all ] || [ "$1" = "$out" ] || continue
+			cycle_output "$dir" "$sock" "$out"
+		done
+	done
+}
+
+# A panel that died before this service started (on the first frame at boot,
+# drawn by the splash) never shows up in --follow-new, and a compositor
+# starting later keeps the stuck CRTC. Recover those panels once, as soon as
+# a compositor runs. The marker in /run keeps a respawn from repeating it.
+CATCHUP_WAIT=${CATCHUP_WAIT:-300}
+MARKER=/run/winglm-panel-recovery.catchup
+
+catch_up() {
+	[ -e "$MARKER" ] && return 0
+	: > "$MARKER"
+	names=""
+	for id in $(dmesg | sed -n 's/.*report PANEL_DEAD conn_id: \([0-9]*\).*/\1/p' | sort -u); do
+		names="$names $(conn_name "$id")"
+	done
+	names=$(echo $names)
+	[ -n "$names" ] || return 0
+	log "panel dead before start: $names; waiting for a compositor"
+	i=0
+	while [ "$i" -lt "$CATCHUP_WAIT" ]; do
+		if [ -n "$(wl_sessions)" ]; then
+			sleep 5   # let the compositor finish its first modeset
+			for name in $names; do
+				recover "$name"
+			done
+			return 0
+		fi
+		sleep 1
+		i=$((i + 1))
+	done
+	log "no compositor after ${CATCHUP_WAIT}s, not recovering: $names"
+}
+
+# Connectors that reported PANEL_DEAD so far: the frame timeouts don't name
+# their connector, and cycling every screen (the main one too) for one dead
+# panel turned the main screen off and broke the shell while it started
+dead_connectors() {
+	for id in $(dmesg | sed -n 's/.*report PANEL_DEAD conn_id: \([0-9]*\).*/\1/p' | sort -u); do
+		conn_name "$id"
+	done
+}
+
+log "watching kernel log (threshold $THRESHOLD in ${WINDOW}s, cooldown ${COOLDOWN}s)"
+catch_up &
+# The catch-up above handles what happened before; timeouts still trickling
+# in from that panel must not start a second recovery right away
+first=0 n=0 last=$(uptime_s) target=""
+dmesg --follow-new | while read -r line; do
+	case "$line" in
+	*"report PANEL_DEAD conn_id:"*)
+		id=$(echo "$line" | sed -n 's/.*conn_id: \([0-9]*\).*/\1/p')
+		target=$(conn_name "$id")
+		n=$THRESHOLD
+		;;
+	*"failed wait_for_idle"* | *"ESD recovery already pending"*)
+		now=$(uptime_s)
+		if [ $((now - first)) -gt "$WINDOW" ]; then
+			first=$now n=0
+		fi
+		n=$((n + 1))
+		;;
+	*)
+		continue
+		;;
+	esac
+
+	[ "$n" -ge "$THRESHOLD" ] || continue
+	now=$(uptime_s)
+	[ $((now - last)) -ge "$COOLDOWN" ] || continue
+	log "panel stuck (${target:-unknown connector}): $line"
+	if [ -n "$target" ]; then
+		recover "$target"
+	else
+		dead=$(dead_connectors)
+		if [ -n "$dead" ]; then
+			for name in $dead; do
+				recover "$name"
+			done
+		else
+			recover all
+		fi
+	fi
+	last=$(uptime_s) first=0 n=0 target=""
+done

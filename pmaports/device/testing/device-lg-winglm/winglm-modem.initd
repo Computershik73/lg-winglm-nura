@@ -1,0 +1,33 @@
+#!/sbin/openrc-run
+
+description="LG Wing: modem (also runs the WLAN firmware) and IPA"
+
+# Downstream PIL keeps a subsystem up while its device node is open
+supervisor=supervise-daemon
+command=/bin/sh
+command_args="-c 'exec 3</dev/subsys_modem; exec sleep 2147483647'"
+
+depend() {
+	need qrtr-ns pd-mapper tqftpserv winglm-rmtfs
+	after winglm-adsp
+	before modemmanager networkmanager winglm-wlan
+}
+
+start_pre() {
+	# IPA firmware: data path of the modem and of the WLAN driver
+	if [ -e /dev/ipa ]; then
+		echo 1 > /dev/ipa 2>/dev/null || true
+	fi
+
+	# The modem fetches its RF card description over TFTP
+	# (/readonly/firmware/image/modem_pr/so/<hwid>_<fsid>_<eeprom>.mbn),
+	# without it: "rfm_init: NO RF FUNCTIONALITY", offline, no bands.
+	# tqftpserv looks in the firmware directory, where msm-firmware-loader
+	# only links the top level of image/.
+	local fw=/run/msm-firmware-loader d
+	for d in "$fw"/mnt/modem*/image/modem_pr; do
+		if [ -d "$d" ] && [ ! -e "$fw"/target/modem_pr ]; then
+			ln -s "$d" "$fw"/target/modem_pr
+		fi
+	done
+}

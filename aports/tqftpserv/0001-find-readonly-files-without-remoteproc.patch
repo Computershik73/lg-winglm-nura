@@ -1,0 +1,40 @@
+From: winglm port
+Subject: [PATCH] translate: find readonly files without the remoteproc class
+
+Downstream (PIL based) kernels have no /sys/class/remoteproc, so the
+modem could not fetch anything from /readonly/firmware/image/ (e.g. the
+WLAN firmware wlanmdsp.mbn). Look in the firmware directory itself then:
+firmware_class.path (set by msm-firmware-loader) or /lib/firmware.
+---
+--- a/translate.c	2026-11-16 04:43:10.425119050 +0400
++++ b/translate.c	2026-11-16 04:43:10.457085593 +0400
+@@ -84,7 +84,28 @@
+ 
+ 	class_fd = open("/sys/class/remoteproc", O_RDONLY | O_DIRECTORY);
+ 	if (class_fd < 0) {
+-		warn("failed to open remoteproc class");
++		/*
++		 * Downstream (PIL based) kernels have no remoteproc class:
++		 * look in the firmware directory itself, the one given to the
++		 * kernel through firmware_class.path or else /lib/firmware.
++		 */
++		if (strlen(fw_sysfs_path) > 0 &&
++		    strlen(fw_sysfs_path) + 1 + strlen(file) + 1 < sizeof(path)) {
++			strcpy(path, fw_sysfs_path);
++			strcat(path, "/");
++			strcat(path, file);
++			fd = open_maybe_compressed(path);
++			if (fd >= 0)
++				return fd;
++		}
++		if (strlen(FIRMWARE_BASE) + strlen(file) + 1 < sizeof(path)) {
++			strcpy(path, FIRMWARE_BASE);
++			strcat(path, file);
++			fd = open_maybe_compressed(path);
++			if (fd >= 0)
++				return fd;
++		}
++		warn("failed to open %s without remoteproc class", file);
+ 		return -1;
+ 	}
+ 

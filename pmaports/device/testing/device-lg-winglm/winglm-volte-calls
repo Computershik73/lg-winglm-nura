@@ -1,0 +1,49 @@
+#!/bin/sh
+# LG Wing VoLTE, user session: a GNOME Calls SIP account for the local IMS
+# gateway of winglm-volte (127.0.0.1:5070, "Use for Phone Calls").
+CFG=${XDG_CONFIG_HOME:-$HOME/.config}/calls/sip-account.cfg
+mkdir -p "$(dirname "$CFG")"
+
+if ! grep -qs '^Host=127.0.0.1$' "$CFG" || ! grep -qs '^Port=5070$' "$CFG"; then
+	n=1
+	while grep -qs "^\[sip-$(printf %02d $n)\]" "$CFG"; do
+		n=$((n + 1))
+	done
+	cat >> "$CFG" <<EOF
+[sip-$(printf %02d $n)]
+Id=volte@127.0.0.1
+Host=127.0.0.1
+User=volte
+DisplayName=VoLTE
+Protocol=UDP
+Port=5070
+AutoConnect=true
+DirectMode=false
+LocalPort=0
+CanTel=true
+EOF
+fi
+
+# The gateway checks no password, but Calls refuses an account without one.
+# The session keyring is always unlocked (also with autologin); store it
+# there on every login, before Calls starts.
+for proto in sip udp UDP; do
+	printf 'volte' | secret-tool store --collection=session \
+		--label='Calls Password for volte@127.0.0.1' \
+		xdg:schema sm.puri.Calls server 127.0.0.1 username volte \
+		protocol "$proto" 2>/dev/null
+done
+
+# If Calls came up before the password was there it gave up on the account:
+# restart it (D-Bus activation keeps it in this session) once.
+(
+	sleep 25
+	if pgrep -u "$(id -u)" -x gnome-calls >/dev/null && \
+	   ! grep -qs '^calls=1' /run/winglm-volte/status; then
+		pkill -u "$(id -u)" -x gnome-calls
+		sleep 1
+		gdbus call --session --dest org.gnome.Calls --object-path /org/gnome/Calls \
+			--method org.freedesktop.DBus.Peer.Ping >/dev/null 2>&1
+	fi
+) >/dev/null 2>&1 &
+exit 0

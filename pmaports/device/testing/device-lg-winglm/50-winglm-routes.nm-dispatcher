@@ -1,0 +1,37 @@
+#!/bin/sh
+# LG Wing: this 4.19 kernel rejects IPv4 routes that carry an explicit
+# 0.0.0.0 gateway ("Nexthop has invalid gateway", ENETUNREACH), and
+# NetworkManager 1.58 sends exactly that for prefix routes. The prefix route
+# fails, then the default route through the gateway fails as well: Wi-Fi gets
+# an address but no routes. Add both with iproute2 (no gateway attribute)
+# once NetworkManager has configured the address.
+IFACE="$1"
+ACTION="$2"
+case "$ACTION" in
+	up|dhcp4-change|reapply|connectivity-change) ;;
+	*) exit 0 ;;
+esac
+case "$IFACE" in
+	""|lo|usb0|rmnet*|dummy*) exit 0 ;;
+esac
+[ "${IP4_NUM_ADDRESSES:-0}" -gt 0 ] || exit 0
+
+case "$IFACE" in
+	wlan*) metric=600 ;;
+	*) metric=100 ;;
+esac
+
+# IP4_ADDRESS_0="192.168.31.89/24 192.168.31.1"
+set -- $IP4_ADDRESS_0
+cidr=$1
+gw=${IP4_GATEWAY:-$2}
+addr=${cidr%/*}
+plen=${cidr#*/}
+net=$(ipcalc -n "$cidr" 2>/dev/null | sed -n 's/^NETWORK=//p')
+[ -n "$net" ] || exit 0
+
+ip route replace "$net/$plen" dev "$IFACE" proto static scope link src "$addr" metric $metric
+if [ -n "$gw" ] && [ "$gw" != "0.0.0.0" ]; then
+	ip route replace default via "$gw" dev "$IFACE" proto static metric $metric
+fi
+exit 0

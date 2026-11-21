@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Swivel screen brightness
+Comment=Keep the swivel screen brightness in step with the main screen
+Exec=winglm-brightness --daemon
+NoDisplay=true
+OnlyShowIn=Phosh;GNOME;
+X-GNOME-AutoRestart=true

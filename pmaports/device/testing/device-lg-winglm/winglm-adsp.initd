@@ -1,0 +1,36 @@
+#!/sbin/openrc-run
+
+description="LG Wing: firmware setup and audio DSP (sound card)"
+
+# A DSP that crashes the phone while booting would do so on every boot:
+# a marker left behind by an unfinished boot skips it once.
+MARKER=/var/lib/winglm/adsp-booting
+
+depend() {
+	need qrtr-ns pd-mapper
+	after msm-firmware-loader
+}
+
+start() {
+	ebegin "Preparing remote processor firmware"
+	/usr/libexec/winglm-dsp-setup firmware
+	eend $?
+
+	mkdir -p /var/lib/winglm
+	if [ -e "$MARKER" ]; then
+		rm -f "$MARKER"
+		ewarn "Last audio DSP start didn't finish, skipping it this boot"
+		return 0
+	fi
+	ebegin "Starting the audio DSP"
+	touch "$MARKER"; sync
+	echo 1 > /sys/kernel/boot_adsp/boot
+	n=0
+	while ! grep -q . /proc/asound/cards 2>/dev/null || grep -q "no soundcards" /proc/asound/cards; do
+		n=$((n + 1)); [ $n -gt 30 ] && break
+		sleep 1
+	done
+	rm -f "$MARKER"
+	grep -qv "no soundcards" /proc/asound/cards
+	eend $? "no sound card"
+}

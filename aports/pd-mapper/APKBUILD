@@ -1,0 +1,31 @@
+# Protection domain mapper for Qualcomm remote processors. Mainline kernels
+# have it built in, downstream ones (LG Wing, 4.19) need this daemon for the
+# audio (ADSP) and WLAN (modem) protection domains.
+pkgname=pd-mapper
+pkgver=1.1
+pkgrel=1
+pkgdesc="Qualcomm protection domain mapper"
+url="https://github.com/linux-msm/pd-mapper"
+arch="aarch64 armv7"
+license="BSD-3-Clause"
+makedepends="qrtr-dev xz-dev"
+subpackages="$pkgname-openrc"
+source="$pkgname-$pkgver.tar.gz::https://github.com/linux-msm/pd-mapper/archive/refs/tags/v$pkgver.tar.gz
+	0001-find-jsons-without-remoteproc.patch
+	pd-mapper.initd
+	"
+options="!check" # no tests
+
+build() {
+	make prefix=/usr
+}
+
+package() {
+	install -Dm755 pd-mapper "$pkgdir"/usr/bin/pd-mapper
+	install -Dm755 "$srcdir"/pd-mapper.initd "$pkgdir"/etc/init.d/pd-mapper
+}
+sha512sums="
+d870933f1000adf6701d5dde29bc528aa9a60686179cf696322bf0663833c5ed7a085882c79aa8cd4231baba3906299da1c0160c118c163ea4b2954a0e19e9cc  pd-mapper-1.1.tar.gz
+48ab3dad3fbda9d3b879459c4a04d573ac42e1699bc8dfcead7bd27797d03bd186b4249ee41e5a4254d415e31c371fd6129cfab9b8a09f3c4ba48f0f40af1df0  0001-find-jsons-without-remoteproc.patch
+2cc2ebf7e525b3ca518e38bed1bb2f87f6f3c6760c69932bc450431394943c8faacb80b81391eb92ef08229f40b18005682695fabfa306fbd446e1876f285f34  pd-mapper.initd
+"

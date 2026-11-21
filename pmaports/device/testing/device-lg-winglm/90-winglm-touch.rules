@@ -1,0 +1,4 @@
+# Map each touchscreen to its panel (libinput reads WL_OUTPUT, wlroots
+# compositors map the device to the output with that name)
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="touch_dev", ENV{WL_OUTPUT}="DSI-1"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="touch_sub_dev", ENV{WL_OUTPUT}="DSI-2"

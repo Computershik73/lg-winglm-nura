@@ -1,0 +1,6 @@
+#!/bin/sh
+rc-update add winglm-panel-recovery default >/dev/null 2>&1 || true
+# polkitd from OpenRC (as its own user, see /etc/conf.d/polkit) instead of
+# D-Bus activation as root
+rc-update add polkit default >/dev/null 2>&1 || true
+exit 0

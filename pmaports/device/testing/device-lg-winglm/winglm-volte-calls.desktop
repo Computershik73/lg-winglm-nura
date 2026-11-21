@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=VoLTE account for Calls
+Comment=GNOME Calls SIP account for the LG Wing VoLTE gateway
+Exec=/usr/libexec/winglm-volte-calls
+NoDisplay=true
+X-GNOME-Autostart-Phase=Initialization
+X-GNOME-AutoRestart=false

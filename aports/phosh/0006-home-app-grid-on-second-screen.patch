@@ -1,0 +1,253 @@
+From: winglm port
+Subject: [PATCH] home: app grid on the second screen in landscape
+
+When the main screen is landscape and there's a second built-in screen
+(LG Wing T position: the swivel screen below the main one) the app grid
+moves to a layer surface on that screen, shown while the home is
+unfolded. The main screen keeps the running apps. The grid moves back
+before that surface goes away and when the main screen turns portrait.
+---
+--- a/src/home.c	2026-11-16 04:04:20.316742996 +0400
++++ b/src/home.c	2026-11-16 04:04:20.331811690 +0400
+@@ -19,6 +19,7 @@
+ #include "shell.h"
+ #include "phosh-enums.h"
+ #include "osk-manager.h"
++#include "monitor-manager.h"
+ #include "style-manager.h"
+ #include "toplevel-manager.h"
+ #include "toplevel-thumbnail.h"
+@@ -92,6 +93,12 @@
+   PhoshThumbnailOverlay *thumbnail_overlay;
+ 
+   gboolean         unfolding;
++
++  /* App grid on a second built-in screen while the main one is landscape
++   * (LG Wing T position): the main screen keeps the running apps */
++  GtkWidget       *grid_home;    /* the app grid's place in the overview */
++  GtkWidget       *grid_surface; /* layer surface on grid_monitor */
++  PhoshMonitor    *grid_monitor;
+ };
+ G_DEFINE_TYPE (PhoshHome, phosh_home, PHOSH_TYPE_DRAG_SURFACE);
+ 
+@@ -201,6 +208,176 @@
+ }
+ 
+ 
++static void update_app_grid_placement (PhoshHome *self);
++
++
++static void
++move_widget (GtkWidget *widget, GtkWidget *target)
++{
++  GtkWidget *parent = gtk_widget_get_parent (widget);
++
++  if (parent == target)
++    return;
++
++  g_object_ref (widget);
++  if (parent)
++    gtk_container_remove (GTK_CONTAINER (parent), widget);
++  gtk_container_add (GTK_CONTAINER (target), widget);
++  g_object_unref (widget);
++}
++
++
++/* The second built-in screen while the main one is landscape */
++static PhoshMonitor *
++find_grid_monitor (PhoshHome *self)
++{
++  PhoshShell *shell = phosh_shell_get_default ();
++  PhoshMonitorManager *mm = phosh_shell_get_monitor_manager (shell);
++  PhoshMonitor *primary = phosh_shell_get_primary_monitor (shell);
++
++  if (!primary || !mm || primary->logical.width <= primary->logical.height)
++    return NULL;
++
++  for (guint i = 0; i < phosh_monitor_manager_get_num_monitors (mm); i++) {
++    PhoshMonitor *monitor = phosh_monitor_manager_get_monitor (mm, i);
++
++    if (!monitor || monitor == primary || !monitor->name ||
++        !phosh_monitor_is_configured (monitor))
++      continue;
++
++    if (phosh_monitor_is_builtin (monitor))
++      return monitor;
++  }
++
++  return NULL;
++}
++
++
++static void
++on_grid_surface_destroy (PhoshHome *self, GtkWidget *surface)
++{
++  GtkWidget *app_grid = GTK_WIDGET (phosh_overview_get_app_grid (self->overview));
++
++  /* Closed by the compositor (its output went away): save the app grid */
++  if (gtk_widget_get_parent (app_grid) == surface)
++    move_widget (app_grid, self->grid_home);
++
++  if (self->grid_surface == surface)
++    self->grid_surface = NULL;
++  g_clear_object (&self->grid_monitor);
++}
++
++
++static void
++destroy_grid_surface (PhoshHome *self)
++{
++  GtkWidget *surface = g_steal_pointer (&self->grid_surface);
++  GtkWidget *app_grid;
++
++  if (!surface)
++    return;
++
++  app_grid = GTK_WIDGET (phosh_overview_get_app_grid (self->overview));
++
++  g_signal_handlers_disconnect_by_data (surface, self);
++  if (gtk_widget_get_parent (app_grid) == surface)
++    move_widget (app_grid, self->grid_home);
++  gtk_widget_destroy (surface);
++  g_clear_object (&self->grid_monitor);
++}
++
++
++static void
++create_grid_surface (PhoshHome *self, PhoshMonitor *monitor)
++{
++  static GtkCssProvider *provider;
++  PhoshWayland *wl = phosh_wayland_get_default ();
++  GtkStyleContext *context;
++
++  if (!provider) {
++    provider = gtk_css_provider_new ();
++    gtk_css_provider_load_from_data (provider,
++                                     ".phosh-app-grid-surface { background-color: rgba(0, 0, 0, 0.85); }",
++                                     -1, NULL);
++  }
++
++  g_debug ("App grid goes to %s", monitor->name);
++  self->grid_monitor = g_object_ref (monitor);
++  self->grid_surface = g_object_new (PHOSH_TYPE_LAYER_SURFACE,
++                                     "layer-shell", phosh_wayland_get_zwlr_layer_shell_v1 (wl),
++                                     "wl-output", monitor->wl_output,
++                                     "anchor", ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
++                                               ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
++                                               ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT |
++                                               ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT,
++                                     "layer", ZWLR_LAYER_SHELL_V1_LAYER_TOP,
++                                     "kbd-interactivity", TRUE,
++                                     "exclusive-zone", 0,
++                                     "namespace", "phosh app grid",
++                                     NULL);
++  context = gtk_widget_get_style_context (self->grid_surface);
++  gtk_style_context_add_provider (context, GTK_STYLE_PROVIDER (provider),
++                                  GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
++  gtk_style_context_add_class (context, "phosh-app-grid-surface");
++  g_signal_connect_object (self->grid_surface, "destroy",
++                           G_CALLBACK (on_grid_surface_destroy), self,
++                           G_CONNECT_SWAPPED);
++}
++
++
++/* Put the app grid on the second screen in the T position, show it while
++ * the home is unfolded */
++static void
++update_app_grid_placement (PhoshHome *self)
++{
++  GtkWidget *app_grid;
++  PhoshMonitor *monitor;
++  gboolean show;
++
++  if (!self->overview || !self->grid_home)
++    return;
++
++  app_grid = GTK_WIDGET (phosh_overview_get_app_grid (self->overview));
++  monitor = find_grid_monitor (self);
++
++  if (self->grid_surface && monitor != self->grid_monitor)
++    destroy_grid_surface (self);
++
++  if (monitor && !self->grid_surface)
++    create_grid_surface (self, monitor);
++
++  move_widget (app_grid, self->grid_surface ?: self->grid_home);
++
++  if (!self->grid_surface)
++    return;
++
++  show = self->state == PHOSH_HOME_STATE_UNFOLDED && gtk_widget_get_visible (GTK_WIDGET (self));
++  gtk_widget_set_visible (self->grid_surface, show);
++  /* the grid surface gets the keyboard (search) instead of the home */
++  phosh_layer_surface_set_kbd_interactivity (PHOSH_LAYER_SURFACE (self), FALSE);
++}
++
++
++static void
++on_monitor_added (PhoshHome *self, PhoshMonitor *monitor)
++{
++  /* name and connector type come with a later 'configured' */
++  g_signal_connect_object (monitor, "configured",
++                           G_CALLBACK (update_app_grid_placement), self,
++                           G_CONNECT_SWAPPED);
++  update_app_grid_placement (self);
++}
++
++
++static void
++on_monitor_removed (PhoshHome *self, PhoshMonitor *monitor)
++{
++  if (monitor == self->grid_monitor)
++    destroy_grid_surface (self);
++  update_app_grid_placement (self);
++}
++
++
+ static gboolean
+ on_configure_event (PhoshHome *self, GdkEventConfigure *event)
+ {
+@@ -219,6 +396,9 @@
+   /* Update drag handle since overview size might have changed */
+   update_drag_handle (self, TRUE);
+ 
++  /* Rotated: the app grid may move between the screens */
++  update_app_grid_placement (self);
++
+   return FALSE;
+ }
+ 
+@@ -662,6 +842,7 @@
+ 
+   phosh_layer_surface_set_kbd_interactivity (PHOSH_LAYER_SURFACE (self), kbd_interactivity);
+   update_drag_handle (self, TRUE);
++  update_app_grid_placement (self);
+ }
+ 
+ 
+@@ -744,6 +925,16 @@
+                            self,
+                            G_CONNECT_SWAPPED);
+   on_theme_name_changed (self, NULL, phosh_shell_get_style_manager (shell));
++
++  self->grid_home = gtk_widget_get_parent (GTK_WIDGET (phosh_overview_get_app_grid (self->overview)));
++  g_signal_connect_object (phosh_shell_get_monitor_manager (phosh_shell_get_default ()),
++                           "monitor-added", G_CALLBACK (on_monitor_added), self,
++                           G_CONNECT_SWAPPED);
++  g_signal_connect_object (phosh_shell_get_monitor_manager (phosh_shell_get_default ()),
++                           "monitor-removed", G_CALLBACK (on_monitor_removed), self,
++                           G_CONNECT_SWAPPED);
++  g_signal_connect (self, "notify::visible", G_CALLBACK (update_app_grid_placement), NULL);
++  update_app_grid_placement (self);
+ }
+ 
+ 
+@@ -752,6 +943,8 @@
+ {
+   PhoshHome *self = PHOSH_HOME (object);
+ 
++  destroy_grid_surface (self);
++
+   g_clear_object (&self->settings);
+ 
+   if (self->action_names) {

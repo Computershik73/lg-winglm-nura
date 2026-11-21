@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.postmarketos.winglm.brightness" path="/org/postmarketos/winglm/brightness/">
+    <key name="sync" type="b">
+      <default>true</default>
+      <summary>Same brightness on both panels</summary>
+      <description>When enabled the shell brightness slider sets the main and the swivel panel.</description>
+    </key>
+    <key name="secondary" type="d">
+      <range min="0.0" max="1.0"/>
+      <default>0.43</default>
+      <summary>Swivel panel brightness</summary>
+      <description>Relative brightness of the swivel panel when it is not in sync with the main panel.</description>
+    </key>
+  </schema>
+</schemalist>

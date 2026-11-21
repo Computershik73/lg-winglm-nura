@@ -1,0 +1,85 @@
+From: winglm port
+Subject: [PATCH] rotation-manager: make forcing portrait on lock optional
+
+New setting sm.puri.phosh.lockscreen force-portrait (default true, the old
+behaviour). Devices that manage the orientation themselves (LG Wing: the
+swivel screen) turn it off: the main screen is landscape in the T position
+and the lock screen handles that by putting the keypad on the second
+screen. Locking in portrait, opening the swivel and unlocking otherwise
+"restored" portrait.
+
+Also start without a saved transform: prelock_transform was 0 (normal),
+so the first unlock of a session always turned the screen to portrait.
+---
+--- a/data/mobi.phosh.shell.gschema.xml	2026-11-16 04:04:20.124770939 +0400
++++ b/data/mobi.phosh.shell.gschema.xml	2026-11-16 04:04:20.151853264 +0400
+@@ -168,6 +168,17 @@
+         or password by simply swiping up.
+       </description>
+     </key>
++
++    <key name="force-portrait" type="b">
++      <default>true</default>
++      <summary>Turn phones to portrait while locked</summary>
++      <description>
++        The lock screen doesn't fit a landscape phone screen, so phones
++        are turned to portrait when locking and back on unlock. Devices
++        whose orientation is managed otherwise (e.g. by a swivel screen)
++        set this to false.
++      </description>
++    </key>
+   </schema>
+ 
+   <enum id='mobi.phosh.shell.NotificationUrgency'>
+--- a/src/rotation-manager.c	2026-11-16 04:04:20.135902223 +0400
++++ b/src/rotation-manager.c	2026-11-16 04:04:20.152380638 +0400
+@@ -54,6 +54,7 @@
+   gboolean                 blanked;
+ 
+   GSettings               *settings;
++  GSettings               *lockscreen_settings;
+   gboolean                 orientation_locked;
+ 
+   PhoshRotationManagerMode mode;
+@@ -267,6 +268,9 @@
+     return;
+ 
+   if (lock) {
++    if (!g_settings_get_boolean (self->lockscreen_settings, "force-portrait"))
++      return;
++
+     if (self->prelock_transform == -1) {
+       self->prelock_transform = phosh_monitor_get_transform (self->monitor);
+       g_debug ("Saving prelock transform %d", self->prelock_transform);
+@@ -277,10 +281,9 @@
+       PHOSH_MONITOR_TRANSFORM_NORMAL;
+     g_debug ("Forcing portrait transform: %d", transform);
+   } else {
+-    if (self->prelock_transform == -1) {
+-      g_warning ("Prelock transform invalid");
+-      self->prelock_transform = PHOSH_MONITOR_TRANSFORM_NORMAL;
+-    }
++    /* Nothing forced on lock (or it was already restored) */
++    if (self->prelock_transform == -1)
++      return;
+     g_debug ("Restoring transform %d", self->prelock_transform);
+     transform = self->prelock_transform;
+     self->prelock_transform = -1;
+@@ -519,6 +522,7 @@
+   g_clear_object (&self->cancel);
+ 
+   g_clear_object (&self->settings);
++  g_clear_object (&self->lockscreen_settings);
+ 
+   if (self->sensor_proxy_manager) {
+     g_signal_handlers_disconnect_by_data (self->sensor_proxy_manager,
+@@ -611,6 +615,9 @@
+ phosh_rotation_manager_init (PhoshRotationManager *self)
+ {
+   self->cancel = g_cancellable_new ();
++  /* 0 is a valid transform: without this the first unlock "restored" portrait */
++  self->prelock_transform = -1;
++  self->lockscreen_settings = g_settings_new ("sm.puri.phosh.lockscreen");
+ }
+ 
+ 

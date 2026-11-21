@@ -1,0 +1,18 @@
+#!/sbin/openrc-run
+
+description="LG Wing: modem remote file system on EFS file copies"
+
+# The modem's EFS lives on copies in /var/lib/rmtfs (made once, read-only,
+# from modemst1/modemst2/fsg/fsc): the partitions are never written.
+supervisor=supervise-daemon
+command=/usr/bin/rmtfs
+command_args="-o /var/lib/rmtfs"
+
+depend() {
+	need qrtr-ns
+	before winglm-modem
+}
+
+start_pre() {
+	/usr/libexec/winglm-dsp-setup efs
+}

@@ -1,0 +1,467 @@
+#!/usr/bin/python3
+"""LG Wing: Bluetooth (Qualcomm WCN3991 on the /dev/ttyHS0 UART).
+
+On Android the vendor Bluetooth HAL powers the chip, downloads its patch and
+NVM configuration over the UART and then talks HCI itself. This kernel has
+no serdev, so the in-kernel QCA driver can't do it; this daemon does the
+same as btqca/hci_qca from userspace and then attaches the port to the
+kernel's HCI UART line discipline (hci_uart, H4), so BlueZ gets hci0.
+
+  1. power: unblock the "bt_power" rfkill (bluetooth-power driver: regulators
+     and BT_EN)
+  2. 115200 8N1 with RTS/CTS, read the controller version (EDL 0x19)
+  3. switch controller and host to 3 Mbaud
+  4. download crbtfwXX.tlv (rampatch) and crnvXX[u].bin (NVM) with EDL
+     TLV commands; the NVM gets in-band sleep (needs host support) and deep
+     sleep turned off, the UART speed, and a BD address
+  5. HCI reset, then TIOCSETD N_HCI + HCIUARTSETPROTO H4
+
+It stays running holding the port. When the bt_power rfkill gets blocked
+(e.g. the shell's Bluetooth switch) the chip loses power: the port is
+detached; once it is unblocked again the firmware is loaded again.
+
+The BD address comes from /etc/winglm/bdaddr if present, otherwise it is
+derived from the SoC serial number (stable, unique per phone).
+"""
+import fcntl
+import glob
+import hashlib
+import os
+import select
+import signal
+import struct
+import sys
+import termios
+import time
+
+TTY = "/dev/ttyHS0"
+FW_PATHS = ["/run/msm-firmware-loader/target", "/lib/firmware/qca", "/lib/firmware"]
+BDADDR_FILE = "/etc/winglm/bdaddr"
+
+TIOCPMGET = 0x544D           # msm_geni_serial: vote the UART clocks on
+TIOCSETD = 0x5423
+N_TTY, N_HCI = 0, 15
+HCIUARTSETPROTO = 0x400455C8
+HCIUARTSETFLAGS = 0x400455CB
+HCI_UART_H4 = 0
+TIOCMBIS, TIOCMBIC, TIOCM_RTS = 0x5416, 0x5417, 0x004
+
+EDL_PATCH_CMD = 0xFC00
+EDL_PATCH_VER_REQ, EDL_PATCH_TLV_REQ = 0x19, 0x1E
+EDL_APP_VER_RES_EVT, EDL_TVL_DNLD_RES_EVT = 0x02, 0x04
+SET_BAUDRATE_CMD = 0xFC48
+WRITE_BD_ADDR_CMD = 0xFC14
+BAUD_3M_INDEX = 0x0E
+MAX_SEG = 243
+WCN3991_SOC_ID = 0x40014320
+NVM_TAG_BDADDR, NVM_TAG_HCI, NVM_TAG_DEEP_SLEEP = 2, 17, 27
+
+RFKILL_EVENT = struct.Struct("IBBBB")
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+class Fail(Exception):
+    pass
+
+
+# ----------------------------------------------------------------- rfkill
+
+def rfkill_bt_power():
+    for d in glob.glob("/sys/class/rfkill/rfkill*"):
+        try:
+            if open(d + "/name").read().strip() == "bt_power":
+                return d, int(os.path.basename(d)[6:])
+        except OSError:
+            pass
+    raise Fail("no bt_power rfkill (bluetooth-power driver)")
+
+
+def rfkill_blocked(d):
+    return open(d + "/soft").read().strip() == "1" or open(d + "/hard").read().strip() == "1"
+
+
+def rfkill_set_soft(d, blocked):
+    with open(d + "/soft", "w") as f:
+        f.write("1" if blocked else "0")
+
+
+def rfkill_unblock_all_bt():
+    """Unblock every Bluetooth rfkill and the type's global state.
+
+    bt_power registers soft-blocked and persistent, which also makes the
+    global Bluetooth state "blocked": every new hci rfkill would start
+    blocked and BlueZ would give up powering it. Unblocking through
+    /dev/rfkill (what the shell's switch does) resets the global state."""
+    fd = os.open("/dev/rfkill", os.O_WRONLY)
+    try:
+        os.write(fd, RFKILL_EVENT.pack(0, 2, 3, 0, 0))   # BLUETOOTH, CHANGE_ALL
+    finally:
+        os.close(fd)
+
+
+def power_on_adapter():
+    """BlueZ powers new adapters itself (AutoEnable), unless their rfkill was
+    still blocked at that moment or bluetoothd was just starting; make sure
+    it happened. Through bluetoothd when it runs, so its state agrees."""
+    for _ in range(10):
+        time.sleep(2)
+        hcis = [os.path.basename(d)[3:] for d in glob.glob("/sys/class/bluetooth/hci*")]
+        if not hcis:
+            return
+        idx = hcis[0]
+        if os.system("btmgmt --index %s info 2>/dev/null | grep -q 'current settings:.* powered'" % idx) == 0:
+            return
+        if os.system("pgrep -x bluetoothd >/dev/null") == 0:
+            os.system("bluetoothctl power on >/dev/null 2>&1")
+        else:
+            os.system("btmgmt --index %s power on >/dev/null 2>&1" % idx)
+    log("hci adapter did not power on")
+
+
+def rfkill_unblock_hci():
+    """hci0 gets its own rfkill, which starts out blocked when the bluetooth
+    rfkills were blocked before (e.g. the shell's switch). bt_power is
+    unblocked, so Bluetooth is wanted on: unblock it too."""
+    for _ in range(20):
+        for d in glob.glob("/sys/class/rfkill/rfkill*"):
+            try:
+                if open(d + "/name").read().strip().startswith("hci"):
+                    if open(d + "/soft").read().strip() == "1":
+                        rfkill_set_soft(d, False)
+                    return
+            except OSError:
+                pass
+        time.sleep(0.1)
+
+
+# ------------------------------------------------------------------- UART
+
+class Uart:
+    def __init__(self, path):
+        self.fd = os.open(path, os.O_RDWR | os.O_NOCTTY)
+        try:
+            fcntl.ioctl(self.fd, TIOCPMGET)
+        except OSError as e:
+            log("TIOCPMGET: %s" % e)
+        self.setup(115200, flow=True)
+        self.buf = b""
+
+    def setup(self, baud, flow):
+        a = termios.tcgetattr(self.fd)
+        a[0] = 0                                      # iflag: raw
+        a[1] = 0                                      # oflag
+        a[2] = termios.CS8 | termios.CREAD | termios.CLOCAL | (termios.CRTSCTS if flow else 0)
+        a[3] = 0                                      # lflag
+        speed = getattr(termios, "B%d" % baud)
+        a[4] = a[5] = speed
+        a[6][termios.VMIN] = 0
+        a[6][termios.VTIME] = 0
+        termios.tcsetattr(self.fd, termios.TCSANOW, a)
+
+    def rts(self, on):
+        fcntl.ioctl(self.fd, TIOCMBIS if on else TIOCMBIC, struct.pack("I", TIOCM_RTS))
+
+    def write(self, data):
+        view = memoryview(data)
+        while view:
+            n = os.write(self.fd, view)
+            view = view[n:]
+
+    def flush_input(self):
+        termios.tcflush(self.fd, termios.TCIFLUSH)
+        self.buf = b""
+
+    def read_event(self, timeout):
+        """Next H4 event packet as (code, params), None on timeout."""
+        end = time.monotonic() + timeout
+        while True:
+            # drop anything that isn't an event packet
+            while self.buf and self.buf[0] != 0x04:
+                self.buf = self.buf[1:]
+            if len(self.buf) >= 3 and len(self.buf) >= 3 + self.buf[2]:
+                code, plen = self.buf[1], self.buf[2]
+                params, self.buf = self.buf[3:3 + plen], self.buf[3 + plen:]
+                return code, params
+            left = end - time.monotonic()
+            if left <= 0:
+                return None
+            r, _, _ = select.select([self.fd], [], [], left)
+            if r:
+                self.buf += os.read(self.fd, 4096)
+
+    def close(self):
+        os.close(self.fd)
+
+
+def hci_cmd(uart, opcode, params=b""):
+    uart.write(struct.pack("<BHB", 0x01, opcode, len(params)) + params)
+
+
+def wait_edl(uart, vse_rtype, cc_rtype, timeout=2.0):
+    """Answer to an EDL (0xFC00) command, skipping other events.
+
+    Older chips answer with a vendor event (0xFF) [cresp=0, rtype, data...],
+    the WCN3991 with a Command Complete [ncmd, opcode, status, rtype, data...]
+    (btqca: soc_type >= QCA_WCN3991)."""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        ev = uart.read_event(end - time.monotonic())
+        if ev is None:
+            break
+        code, p = ev
+        if code == 0xFF and len(p) >= 2 and p[0] == 0x00 and p[1] == vse_rtype:
+            return p[2:]
+        if code == 0x0E and len(p) >= 5 and struct.unpack_from("<H", p, 1)[0] == EDL_PATCH_CMD \
+                and p[3] == 0x00 and p[4] == cc_rtype:
+            return p[5:]
+    return None
+
+
+def wait_cmd_complete(uart, opcode, timeout=2.0):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        ev = uart.read_event(end - time.monotonic())
+        if ev is None:
+            break
+        code, p = ev
+        if code == 0x0E and len(p) >= 4 and struct.unpack_from("<H", p, 1)[0] == opcode:
+            return p[3]
+    return None
+
+
+# --------------------------------------------------------------- firmware
+
+def read_version(uart, timeout=1.0):
+    hci_cmd(uart, EDL_PATCH_CMD, bytes([EDL_PATCH_VER_REQ]))
+    v = wait_edl(uart, EDL_APP_VER_RES_EVT, EDL_PATCH_VER_REQ, timeout)
+    if v and len(v) == 13:   # Command Complete form: length byte first
+        v = v[1:]
+    if not v or len(v) < 12:
+        return None
+    product, patch, rom, soc = struct.unpack_from("<IHHI", v)
+    return {"product": product, "patch": patch, "rom": rom, "soc": soc}
+
+
+def find_fw(name):
+    for d in FW_PATHS:
+        p = os.path.join(d, name)
+        if os.path.exists(p):
+            return p
+    raise Fail("firmware %s not found in %s" % (name, ", ".join(FW_PATHS)))
+
+
+def bdaddr():
+    try:
+        s = open(BDADDR_FILE).read().strip()
+        b = bytes(int(x, 16) for x in s.split(":"))
+        if len(b) == 6:
+            return b
+    except (OSError, ValueError):
+        pass
+    serial = open("/sys/devices/soc0/serial_number").read().strip()
+    b = bytearray(hashlib.sha256(("winglm-bt:" + serial).encode()).digest()[:6])
+    b[0] = (b[0] & 0xFC) | 0x02  # same style as the generated WLAN MAC
+    return bytes(b)
+
+
+def fmt_addr(b):
+    return ":".join("%02X" % x for x in b)
+
+
+def patch_nvm(data, addr, wcn3991):
+    """Edit the NVM tags in place (like btqca's qca_tlv_check_data); returns
+    True if it had a BD address tag. Files with more than one set of tags
+    have an enclosing header of type 4; only the first set (type 2) is
+    edited, as btqca does."""
+    off = 0
+    type_len = struct.unpack_from("<I", data, off)[0]
+    if type_len & 0xFF == 4:
+        off = 4
+        type_len = struct.unpack_from("<I", data, off)[0]
+    if type_len & 0xFF != 2:
+        log("NVM: no tag set of type 2, sent as is")
+        return False
+    end = off + 4 + (type_len >> 8)
+    idx, had_addr = off + 4, False
+    while idx + 12 <= end:
+        tag, tlen = struct.unpack_from("<HH", data, idx)
+        d = idx + 12
+        if tag == NVM_TAG_HCI and tlen >= 3:
+            data[d] &= ~0x80 & 0xFF        # no in-band sleep: H4 has no IBS
+            # the UART speed the controller switches to with this NVM
+            data[d + (1 if wcn3991 else 2)] = BAUD_3M_INDEX
+        elif tag == NVM_TAG_DEEP_SLEEP and tlen >= 1:
+            data[d] &= ~0x01 & 0xFF        # deep sleep needs IBS wake-ups
+        elif tag == NVM_TAG_BDADDR and tlen == 6:
+            data[d:d + 6] = addr[::-1]     # little endian on the wire
+            had_addr = True
+        idx = d + tlen
+    return had_addr
+
+
+def download(uart, path, nvm=False, addr=None, wcn3991=True):
+    data = bytearray(open(path, "rb").read())
+    had_addr = patch_nvm(data, addr, wcn3991) if nvm else False
+    mode = 0 if nvm else data[4 + 10]   # tlv_type_patch.download_mode
+    segs = [data[i:i + MAX_SEG] for i in range(0, len(data), MAX_SEG)]
+    for i, seg in enumerate(segs):
+        last = i == len(segs) - 1 or len(seg) < MAX_SEG
+        hci_cmd(uart, EDL_PATCH_CMD, bytes([EDL_PATCH_TLV_REQ, len(seg)]) + bytes(seg))
+        if mode in (1, 3) and not last:   # controller skips the per-segment event
+            continue
+        r = wait_edl(uart, EDL_TVL_DNLD_RES_EVT, EDL_PATCH_TLV_REQ, 3.0)
+        if r is None:
+            if last and mode in (1, 3):
+                log("no event for the last segment of %s, going on" % os.path.basename(path))
+                break
+            raise Fail("%s: no answer for segment %d" % (os.path.basename(path), i))
+        # the WCN3991 answers the last segment without a result byte
+        if r[:1] not in (b"", b"\x00"):
+            raise Fail("%s: segment %d failed (0x%s)" % (os.path.basename(path), i, r[:1].hex()))
+    log("downloaded %s (%d bytes, mode %d)" % (os.path.basename(path), len(data), mode))
+    return had_addr
+
+
+def pulse_reset():
+    """WCN399x power pulses (hci_qca's wcn3990 init): 0xC0 at 2400 baud puts
+    the chip back into its boot ROM, 0xFC at 115200 starts it. Needed because
+    the bt_power rfkill doesn't always really cut its power, and a chip that
+    still runs a patch (or 3 Mbaud) doesn't take a new one."""
+    u = Uart(TTY)
+    u.setup(2400, flow=False)
+    u.write(b"\xC0")
+    termios.tcdrain(u.fd)
+    time.sleep(0.02)
+    u.setup(115200, flow=False)
+    u.write(b"\xFC")
+    termios.tcdrain(u.fd)
+    time.sleep(0.1)
+    u.close()
+    time.sleep(0.05)
+
+
+def bring_up():
+    """Firmware into the powered chip; returns the UART attached to hci_uart.
+    The controller only answers with RTS/CTS flow control on."""
+    pulse_reset()
+    uart = Uart(TTY)
+    ver = read_version(uart) or read_version(uart)
+    if ver is None:
+        uart.close()
+        raise Fail("controller doesn't answer")
+    soc_ver = (ver["soc"] << 16) | ver["rom"]
+    rom = ((soc_ver & 0xF00) >> 4) | (soc_ver & 0xF)
+    log("controller: product 0x%08x soc 0x%08x rom 0x%04x patch 0x%04x"
+        % (ver["product"], ver["soc"], ver["rom"], ver["patch"]))
+
+    # 3 Mbaud: flow control off while the request goes out, as hci_qca does
+    uart.setup(115200, flow=False)
+    uart.rts(False)
+    hci_cmd(uart, SET_BAUDRATE_CMD, bytes([BAUD_3M_INDEX]))
+    termios.tcdrain(uart.fd)
+    time.sleep(0.3)
+    uart.setup(3000000, flow=True)
+    uart.rts(True)
+    time.sleep(0.05)
+    uart.flush_input()
+    if read_version(uart) is None:
+        uart.close()
+        raise Fail("no answer after switching to 3 Mbaud")
+
+    addr = bdaddr()
+    download(uart, find_fw("crbtfw%02x.tlv" % rom))
+    time.sleep(0.01)
+    nvm = "crnv%02xu.bin" % rom if ver["soc"] == WCN3991_SOC_ID else "crnv%02x.bin" % rom
+    try:
+        nvm_path = find_fw(nvm)
+    except Fail:
+        nvm_path = find_fw("crnv%02x.bin" % rom)
+    had_addr = download(uart, nvm_path, nvm=True, addr=addr,
+                        wcn3991=ver["soc"] == WCN3991_SOC_ID)
+
+    hci_cmd(uart, 0x0C03)   # HCI_Reset
+    if wait_cmd_complete(uart, 0x0C03, 3.0) != 0:
+        raise Fail("HCI reset after the download failed")
+    if not had_addr:
+        hci_cmd(uart, WRITE_BD_ADDR_CMD, addr)   # big endian (btqca baswaps)
+        wait_cmd_complete(uart, WRITE_BD_ADDR_CMD, 1.0)
+    log("firmware loaded, BD address %s" % fmt_addr(addr))
+
+    uart.flush_input()
+    fcntl.ioctl(uart.fd, TIOCSETD, struct.pack("i", N_HCI))
+    fcntl.ioctl(uart.fd, HCIUARTSETFLAGS, 0)
+    fcntl.ioctl(uart.fd, HCIUARTSETPROTO, HCI_UART_H4)
+    log("attached %s to hci_uart (H4)" % TTY)
+    return uart
+
+
+def detach(uart):
+    if uart is None:
+        return
+    try:
+        fcntl.ioctl(uart.fd, TIOCSETD, struct.pack("i", N_TTY))
+    except OSError:
+        pass
+    uart.close()
+
+
+def main():
+    rf, rf_idx = rfkill_bt_power()
+    uart = None
+    stop = []
+    signal.signal(signal.SIGTERM, lambda *a: stop.append(1))
+    signal.signal(signal.SIGINT, lambda *a: stop.append(1))
+
+    if not os.path.exists("/sys/module/hci_uart"):
+        os.system("modprobe hci_uart 2>/dev/null")
+    if rfkill_blocked(rf):
+        rfkill_unblock_all_bt()      # powers the chip
+        time.sleep(0.1)
+    rk = os.open("/dev/rfkill", os.O_RDONLY | os.O_NONBLOCK)
+    failures = 0
+    while not stop:
+        if uart is None and not rfkill_blocked(rf):
+            try:
+                time.sleep(0.05)
+                uart = bring_up()
+                failures = 0
+                rfkill_unblock_hci()
+                power_on_adapter()
+            except (Fail, OSError) as e:
+                failures += 1
+                log("bring-up failed: %s" % e)
+                if failures >= 3:
+                    sys.exit(1)
+                time.sleep(1)   # bring_up starts with a reset
+                continue
+        try:
+            r, _, _ = select.select([rk], [], [], 1.0)
+        except InterruptedError:
+            continue
+        if r:
+            try:
+                while os.read(rk, 64):
+                    pass
+            except BlockingIOError:
+                pass
+            if rfkill_blocked(rf) and uart is not None:
+                log("bt_power blocked: chip off, detaching")
+                detach(uart)
+                uart = None
+    detach(uart)
+    try:
+        rfkill_set_soft(rf, True)
+    except OSError:
+        pass
+    log("stopped")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Fail as e:
+        log("winglm-bt: %s" % e)
+        sys.exit(1)

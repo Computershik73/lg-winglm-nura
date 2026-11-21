@@ -1,0 +1,399 @@
+From: winglm port
+Subject: [PATCH] overview: move windows to the other screen
+
+With more than one screen the running activities get a button that moves
+their window to the next screen (phosh-private v9 move_toplevel_to_output,
+bound only when the compositor offers it) and shows it there.
+
+The protocol file is phoc's (version 8 plus the new request) so request
+numbers match the compositor's.
+---
+--- a/protocol/phosh-private.xml	2026-11-16 04:04:20.185879645 +0400
++++ b/protocol/phosh-private.xml	2026-11-16 04:04:20.277055371 +0400
+@@ -1,7 +1,34 @@
+ <protocol name="phosh">
+-  <interface name="phosh_private" version="7">
++  <copyright>
++    Copyright © 2019 Purism SPC
++
++    Permission to use, copy, modify, distribute, and sell this
++    software and its documentation for any purpose is hereby granted
++    without fee, provided that the above copyright notice appear in
++    all copies and that both that copyright notice and this permission
++    notice appear in supporting documentation, and that the name of
++    the copyright holders not be used in advertising or publicity
++    pertaining to distribution of the software without specific,
++    written prior permission.  The copyright holders make no
++    representations about the suitability of this software for any
++    purpose.  It is provided "as is" without express or implied
++    warranty.
++
++    THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS
++    SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
++    FITNESS, IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY
++    SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
++    WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN
++    AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION,
++    ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
++    THIS SOFTWARE.
++  </copyright>
++  <interface name="phosh_private" version="9">
+     <description summary="Phone shell extensions">
+       Private protocol between phosh and the compositor.
++
++      Instead of adding more interfaces here consider adding a separate
++      zphoc-unstable protocol instead.
+     </description>
+ 
+     <enum name="error">
+@@ -70,6 +97,54 @@
+       <arg name="state" type="uint" enum="shell_state" summary="Status"/>
+     </request>
+ 
++    <request name="add_thumbnail_view" since="8">
++      <description summary="attach a view thumbnail to a layer surface">
++        Creates a thumbnail object that renders the content of `toplevel`
++        onto the given `layer_surface`.
++
++        The layer surface acts as an anchor providing depth and position
++        information (layer, output and geometry). The compositor renders
++        the thumbnail and the fade instead of the client content, so the
++        client should keep the surface's buffer fully transparent.
++      </description>
++      <arg name="id" type="new_id" interface="phosh_private_thumbnail"/>
++      <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
++      <arg name="layer_surface" type="object" interface="zwlr_layer_surface_v1"/>
++    </request>
++
++    <request name="move_toplevel_to_output" since="9">
++      <description summary="move a toplevel to another output">
++        Moves the toplevel to the given output. When output is null the
++        toplevel moves to the next enabled output.
++      </description>
++      <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
++      <arg name="output" type="object" interface="wl_output" allow-null="true"/>
++    </request>
++
++  </interface>
++
++  <interface name="phosh_private_thumbnail" version="8">
++    <description summary="compositor-rendered view thumbnail">
++      A thumbnail of a toplevel view rendered by the compositor onto a layer
++      surface. The client drives the animation by pushing per-frame
++      transform properties.
++    </description>
++
++    <request name="set_properties" since="8">
++      <description summary="set the thumbnail transform property">
++        x and y give the top-left position of the thumbnail in surface local
++        coordinates, scale is applied to the view's size and alpha is the
++        fade opacity applied to the whole layer surface.
++      </description>
++      <arg name="x" type="int"/>
++      <arg name="y" type="int"/>
++      <arg name="scale" type="fixed"/>
++      <arg name="alpha" type="fixed"/>
++    </request>
++
++    <request name="destroy" type="destructor" since="8">
++      <description summary="destroy the thumbnail"/>
++    </request>
+   </interface>
+ 
+   <interface name="phosh_private_keyboard_event" version="7">
+@@ -84,7 +159,7 @@
+       <entry name="already_subscribed" value="2"
+              summary="accelerator has already been subscribed to"/>
+       <entry name="misc_error" value="3"
+-             summary="an miscellaneous error has occured"/>
++             summary="an miscellaneous error has occurred"/>
+     </enum>
+     <event name="accelerator_activated_event" since="5">
+       <description summary="Report an accelerator press">
+@@ -127,7 +202,7 @@
+ 
+     <event name="ungrab_success_event" since="5">
+       <description summary="Report unsubscription success">
+-        A previous accelerator ungrab request has suceeded.
++        A previous accelerator ungrab request has succeeded.
+       </description>
+       <arg name="action" type="uint" summary="The unsubscribed action"/>
+     </event>
+--- a/src/phosh-wayland.c	2026-11-16 04:04:20.196630095 +0400
++++ b/src/phosh-wayland.c	2026-11-16 04:04:20.272346086 +0400
+@@ -76,10 +76,11 @@
+   struct wl_output *output;
+ 
+   if (!strcmp (interface, "phosh_private")) {
++    /* v9 adds move_toplevel_to_output, stay at 7 for older compositors */
+     self->phosh_private = wl_registry_bind (registry,
+                                             name,
+                                             &phosh_private_interface,
+-                                            7);
++                                            version >= 9 ? 9 : 7);
+     self->phosh_private_version = version;
+   } else if (!strcmp (interface, zphoc_layer_shell_effects_v1_interface.name)) {
+     self->zphoc_layer_shell_effects_v1 = wl_registry_bind (registry,
+--- a/src/toplevel.h	2026-11-16 04:04:20.206329051 +0400
++++ b/src/toplevel.h	2026-11-16 04:04:20.272454468 +0400
+@@ -28,4 +28,5 @@
+ gboolean phosh_toplevel_is_fullscreen (PhoshToplevel *self);
+ void phosh_toplevel_activate (PhoshToplevel *self, struct wl_seat *seat);
+ void phosh_toplevel_close (PhoshToplevel *self);
++gboolean phosh_toplevel_move_to_next_output (PhoshToplevel *self);
+ void phosh_toplevel_fullscreen (PhoshToplevel *self, gboolean fullscreen);
+--- a/src/toplevel.c	2026-11-16 04:04:20.216196582 +0400
++++ b/src/toplevel.c	2026-11-16 04:04:20.272572181 +0400
+@@ -449,6 +449,30 @@
+ }
+ 
+ 
++/**
++ * phosh_toplevel_move_to_next_output:
++ * @self: The toplevel
++ *
++ * Ask the compositor to move the toplevel to the next output.
++ *
++ * Returns: %FALSE if the compositor can't do that
++ */
++gboolean
++phosh_toplevel_move_to_next_output (PhoshToplevel *self)
++{
++  PhoshWayland *wl = phosh_wayland_get_default ();
++  struct phosh_private *phosh_private = phosh_wayland_get_phosh_private (wl);
++
++  g_return_val_if_fail (PHOSH_IS_TOPLEVEL (self), FALSE);
++
++  if (!phosh_private || phosh_wayland_get_phosh_private_version (wl) < 9)
++    return FALSE;
++
++  phosh_private_move_toplevel_to_output (phosh_private, self->handle, NULL);
++  return TRUE;
++}
++
++
+ void
+ phosh_toplevel_close (PhoshToplevel *self)
+ {
+--- a/src/activity.h	2026-11-16 04:04:20.226085638 +0400
++++ b/src/activity.h	2026-11-16 04:04:20.272671304 +0400
+@@ -23,3 +23,4 @@
+                                                      GtkAllocation *allocation);
+ gboolean    phosh_activity_get_has_thumbnail (PhoshActivity *self);
+ GAppInfo *  phosh_activity_get_app_info (PhoshActivity *self);
++void        phosh_activity_set_movable (PhoshActivity *self, gboolean movable);
+--- a/src/activity.c	2026-11-16 04:04:20.235582580 +0400
++++ b/src/activity.c	2026-11-16 04:04:20.273293490 +0400
+@@ -33,6 +33,7 @@
+   CLOSED,
+   FULLSCREENED,
+   RESIZED,
++  MOVE_REQUESTED,
+   N_SIGNALS
+ };
+ static guint signals[N_SIGNALS] = { 0 };
+@@ -57,6 +58,7 @@
+   GtkWidget       *box;
+   GtkWidget       *revealer_close;
+   GtkWidget       *revealer_unfullscreen;
++  GtkWidget       *revealer_move;
+   GtkWidget       *btn_close;
+   GtkWidget       *btn_unfullscreen;
+   GtkWidget       *preview;
+@@ -228,6 +230,13 @@
+ 
+ 
+ static void
++on_move_clicked (PhoshActivity *self)
++{
++  g_signal_emit (self, signals[MOVE_REQUESTED], 0);
++}
++
++
++static void
+ on_unfullscreen_clicked (PhoshActivity *self)
+ {
+   g_signal_emit (self, signals[FULLSCREENED], 0, FALSE);
+@@ -728,6 +737,19 @@
+                                         G_TYPE_NONE, 1,
+                                         G_TYPE_BOOLEAN);
+ 
++  /**
++   * PhoshActivity::move-requested
++   * @self: The activity
++   *
++   * The user wants the activity on another screen.
++   */
++  signals[MOVE_REQUESTED] = g_signal_new ("move-requested",
++                                          G_TYPE_FROM_CLASS (klass),
++                                          G_SIGNAL_RUN_LAST, 0, NULL, NULL,
++                                          NULL,
++                                          G_TYPE_NONE,
++                                          0);
++
+   signals[RESIZED] = g_signal_new ("resized",
+                                    G_TYPE_FROM_CLASS (klass),
+                                    G_SIGNAL_RUN_LAST, 0, NULL, NULL,
+@@ -749,11 +771,13 @@
+   gtk_widget_class_bind_template_child_private (widget_class, PhoshActivity, box);
+   gtk_widget_class_bind_template_child_private (widget_class, PhoshActivity, revealer_close);
+   gtk_widget_class_bind_template_child_private (widget_class, PhoshActivity, revealer_unfullscreen);
++  gtk_widget_class_bind_template_child_private (widget_class, PhoshActivity, revealer_move);
+   gtk_widget_class_bind_template_child_private (widget_class, PhoshActivity, spinner);
+   gtk_widget_class_bind_template_callback (widget_class, clicked_cb);
+   gtk_widget_class_bind_template_callback (widget_class, closed_cb);
+   gtk_widget_class_bind_template_callback (widget_class, draw_cb);
+   gtk_widget_class_bind_template_callback (widget_class, on_unfullscreen_clicked);
++  gtk_widget_class_bind_template_callback (widget_class, on_move_clicked);
+   gtk_widget_class_bind_template_callback (widget_class, removed_cb);
+   gtk_widget_class_bind_template_callback (widget_class, size_allocate_cb);
+ 
+@@ -878,3 +902,25 @@
+ 
+   return priv->app_info;
+ }
++
++
++/**
++ * phosh_activity_set_movable:
++ * @self: The activity
++ * @movable: Whether to offer moving the activity to another screen
++ *
++ * Shows or hides the button to move the activity to another screen.
++ */
++void
++phosh_activity_set_movable (PhoshActivity *self, gboolean movable)
++{
++  PhoshActivityPrivate *priv;
++
++  g_return_if_fail (PHOSH_IS_ACTIVITY (self));
++  priv = phosh_activity_get_instance_private (self);
++
++  /* Revealer won't animate if not mapped, show it preemptively */
++  if (movable)
++    gtk_widget_set_visible (priv->revealer_move, TRUE);
++  gtk_revealer_set_reveal_child (GTK_REVEALER (priv->revealer_move), movable);
++}
+--- a/src/ui/activity.ui	2026-11-16 04:04:20.246025506 +0400
++++ b/src/ui/activity.ui	2026-11-16 04:04:20.272764456 +0400
+@@ -117,6 +117,36 @@
+                   </packing>
+                 </child>
+                 <child type="overlay">
++                  <object class="GtkRevealer" id="revealer_move">
++                    <property name="transition-type">crossfade</property>
++                    <property name="visible" bind-source="revealer_move" bind-property="child-revealed" bind-flags="sync-create"/>
++                    <property name="halign">end</property>
++                    <property name="valign">end</property>
++                    <child>
++                      <object class="GtkButton" id="btn_move">
++                        <property name="visible">1</property>
++                        <property name="tooltip-text" translatable="yes">Move to the other screen</property>
++                        <signal name="clicked" handler="on_move_clicked" swapped="true"/>
++                        <child>
++                          <object class="GtkImage">
++                            <property name="visible">1</property>
++                            <property name="pixel-size">24</property>
++                            <property name="icon-name">view-dual-symbolic</property>
++                          </object>
++                        </child>
++                        <style>
++                          <class name="phosh-activity-close-button"/>
++                          <class name="osd"/>
++                        </style>
++                      </object>
++                    </child>
++                  </object>
++                  <packing>
++                    <property name="pass-through">1</property>
++                    <property name="index">1</property>
++                  </packing>
++                </child>
++                <child type="overlay">
+                   <object class="GtkSpinner" id="spinner">
+                     <property name="visible" bind-source="PhoshActivity" bind-property="has-thumbnail" bind-flags="sync-create|invert-boolean"/>
+                     <property name="active" bind-source="PhoshActivity" bind-property="has-thumbnail" bind-flags="sync-create|invert-boolean"/>
+--- a/src/overview.c	2026-11-16 04:04:20.255673041 +0400
++++ b/src/overview.c	2026-11-16 04:04:20.273833603 +0400
+@@ -15,6 +15,7 @@
+ #include "app-grid.h"
+ #include "overview.h"
+ #include "phosh-wayland.h"
++#include "monitor-manager.h"
+ #include "shell-priv.h"
+ #include "toplevel-manager.h"
+ #include "toplevel-thumbnail.h"
+@@ -321,6 +322,50 @@
+ }
+ 
+ 
++static gboolean
++can_move_activities (void)
++{
++  PhoshMonitorManager *mm = phosh_shell_get_monitor_manager (phosh_shell_get_default ());
++
++  return mm && phosh_monitor_manager_get_num_monitors (mm) > 1;
++}
++
++
++static void
++on_n_monitors_changed (PhoshOverview *self)
++{
++  PhoshOverviewPrivate *priv = phosh_overview_get_instance_private (self);
++  g_autoptr (GList) children = NULL;
++  gboolean movable = can_move_activities ();
++
++  children = gtk_container_get_children (GTK_CONTAINER (priv->carousel_running_activities));
++  for (GList *l = children; l; l = l->next) {
++    if (PHOSH_IS_ACTIVITY (l->data))
++      phosh_activity_set_movable (PHOSH_ACTIVITY (l->data), movable);
++  }
++}
++
++
++static void on_activity_clicked (PhoshOverview *self, PhoshActivity *activity);
++
++/* Send the window to the other screen and show it there */
++static void
++on_activity_move_requested (PhoshOverview *self, PhoshActivity *activity)
++{
++  PhoshToplevel *toplevel = phosh_overview_get_toplevel_from_activity (self, activity);
++
++  if (!toplevel)
++    return;
++
++  g_debug ("Moving %s to the next output", phosh_activity_get_app_id (activity));
++  if (!phosh_toplevel_move_to_next_output (toplevel)) {
++    g_warning ("Compositor can't move windows between screens");
++    return;
++  }
++  on_activity_clicked (self, activity);
++}
++
++
+ static void
+ on_activity_closed (PhoshOverview *self, PhoshActivity *activity)
+ {
+@@ -536,7 +581,9 @@
+                     "swapped-signal::fullscreened", on_activity_fullscreened, self,
+                     "swapped-signal::notify::has-focus", on_activity_has_focus_changed, self,
+                     "swapped-signal::resized", on_activity_resized, self,
++                    "swapped-signal::move-requested", on_activity_move_requested, self,
+                     NULL);
++  phosh_activity_set_movable (PHOSH_ACTIVITY (activity), can_move_activities ());
+ 
+   g_object_connect (toplevel,
+                     "object-signal::closed", on_toplevel_closed, self,
+@@ -818,6 +865,12 @@
+   PhoshOverviewPrivate *priv = phosh_overview_get_instance_private (self);
+ 
+   priv->has_activities = -1;
++
++  g_signal_connect_object (phosh_shell_get_monitor_manager (phosh_shell_get_default ()),
++                           "notify::n-monitors",
++                           G_CALLBACK (on_n_monitors_changed),
++                           self,
++                           G_CONNECT_SWAPPED);
+   gtk_widget_init_template (GTK_WIDGET (self));
+ 
+   priv->app_tracker = phosh_shell_get_app_tracker (shell);

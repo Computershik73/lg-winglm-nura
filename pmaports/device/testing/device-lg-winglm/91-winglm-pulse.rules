@@ -1,0 +1,6 @@
+# LG Wing sound card: the Q6 ASM PCMs advance their position only once per
+# period, and PulseAudio's timer scheduling then picks 0.5 s periods and a
+# 2 s buffer: streams play at a fraction of real time (8 kHz: 2 s of audio
+# took 10-13 s), GStreamer's pulsesink/pulsesrc stall. Interrupt driven
+# scheduling gets 20-25 ms periods, needed for calls over VoLTE.
+SUBSYSTEM=="sound", KERNEL=="card*", ATTR{id}=="litomtpsndcard", ENV{PULSE_NO_TIMER_SCHED}="1"

@@ -1,0 +1,78 @@
+# Contributor: jane400 <alpine@j4ne.de>
+maintainer="team/phosh <newbyte@postmarketos.org>"
+pkgname=stevia
+pkgver=0.58.0
+# winglm fork of Alpine community/stevia: keyboard on a chosen output (0001)
+pkgrel=15
+pkgdesc="Alternative OSK for phosh"
+arch="all"
+url="https://gitlab.gnome.org/World/Phosh/stevia"
+license="GPL-3.0-or-later"
+depends="hunspell-en-us $pkgname-schemas"
+makedepends="
+	$pkgname-schemas
+	cmd:rst2man
+	dconf-dev
+	elogind-dev
+	feedbackd-dev
+	fzf
+	glib-dev
+	gmobile-dev
+	gnome-desktop-dev
+	gtk+3.0-dev
+	hunspell-dev
+	json-glib-dev
+	libhandy1-dev
+	meson
+	presage-dev
+	uim-dev
+	wayland-dev
+	wayland-protocols
+	"
+options="!check" # tests need xvfb
+subpackages="
+	$pkgname-dbg
+	$pkgname-doc
+	$pkgname-lang
+	$pkgname-schemas
+	$pkgname-systemd
+	"
+source="https://gitlab.gnome.org/World/Phosh/stevia/-/archive/v$pkgver/stevia-v$pkgver.tar.gz
+	emoji-db.patch
+	0001-osk-output-setting.patch
+	"
+builddir="$srcdir/stevia-v$pkgver"
+
+provides="phosh-keyboard=0 phosh-osk-stub=$pkgver-r$pkgrel"
+provider_priority=1
+replaces="phosh"
+
+build() {
+	abuild-meson \
+		-Db_lto=true \
+		-Dman=true \
+		-Dwordlist=/usr/share/dict/american-english \
+		. output
+	meson compile -C output
+}
+
+check() {
+	xvfb-run -a meson test --print-errorlogs -C output
+}
+
+package() {
+	DESTDIR="$pkgdir" meson install --no-rebuild -C output
+}
+
+schemas() {
+	pkgdesc="$pkgdesc (schemas)"
+	depends=
+
+	amove usr/share/glib-2.0/schemas
+}
+
+sha512sums="
+b8192011e50d26b223fa28ba6f436268f878b6905952932b913b08e4729959dc8f22cf76375d0498c301f42592acce2ed2f163471d0317efd16050559bb5b0d4  stevia-v0.58.0.tar.gz
+a7c97f986a840c803239322f69dec6df6586a19b1e7d9ca11cff6a0b47861ab1d68263318b6ab93452d6526543428f6ced9617edbadd0c902c7e9767727c5c76  emoji-db.patch
+8bfe000d32642865415ca51dadf47d96d0ba272fc54735f22193a3f3070c747a3b0b0667d8df58637d5f336f4d48771e9f5dbdeee0cb19863c7640651ea1a2e9  0001-osk-output-setting.patch
+"

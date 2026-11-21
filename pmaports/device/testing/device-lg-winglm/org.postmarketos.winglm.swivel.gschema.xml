@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.postmarketos.winglm.swivel" path="/org/postmarketos/winglm/swivel/">
+    <key name="rotate-main" type="b">
+      <default>true</default>
+      <summary>Landscape main screen in the T position</summary>
+      <description>Turn the main screen to landscape when the swivel opens and back to portrait when it closes.</description>
+    </key>
+    <key name="main-transform" type="s">
+      <choices>
+        <choice value="90"/>
+        <choice value="270"/>
+      </choices>
+      <default>"90"</default>
+      <summary>Main screen transform in the T position</summary>
+      <description>Output transform of the main screen while the swivel is open.</description>
+    </key>
+    <key name="swivel-scale" type="d">
+      <range min="1.0" max="4.0"/>
+      <default>3.0</default>
+      <summary>Swivel screen scale</summary>
+      <description>Scale of the swivel screen when it is switched on.</description>
+    </key>
+    <key name="osk-on-swivel" type="b">
+      <default>true</default>
+      <summary>On-screen keyboard on the swivel screen</summary>
+      <description>Show the on-screen keyboard (stevia) on the swivel screen in the T position.</description>
+    </key>
+  </schema>
+</schemalist>

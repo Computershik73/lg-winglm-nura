@@ -1,0 +1,4 @@
+# Adreno 620 through the downstream KGSL driver, plus the ION allocator that
+# Mesa turnip/freedreno-kgsl uses for dma-buf export (no dma-heap on 4.19)
+KERNEL=="kgsl-3d0", GROUP="video", MODE="0660"
+KERNEL=="ion", GROUP="video", MODE="0660"

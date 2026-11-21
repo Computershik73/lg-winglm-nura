@@ -1,0 +1,102 @@
+# Reference: <https://postmarketos.org/vendorkernel>
+# Kernel config based on: arch/arm64/configs/vendor/lineageos_wing_defconfig
+# plus the postmarketOS fragment in pmos.config (see tools/gen-config.sh)
+pkgname=linux-lg-winglm
+pkgver=4.19.325
+pkgrel=6
+pkgdesc="LG Wing kernel fork"
+arch="aarch64"
+_carch="arm64"
+_flavor="lg-winglm"
+url="https://github.com/LineageOS/android_kernel_lge_sm7250"
+license="GPL-2.0-only"
+options="!strip !check !tracedeps pmb:cross-native"
+makedepends="
+	bash
+	bc
+	bison
+	clang
+	devicepkg-dev
+	findutils
+	flex
+	kmod
+	linux-headers
+	lld
+	llvm
+	openssl-dev
+	perl
+	python3
+	xz
+"
+
+# Full LLVM toolchain (ld.lld, llvm-ar, integrated assembler), the same way
+# the Android build does it (build.config.common: LLVM=1)
+export LLVM=1
+export CC="clang"
+export HOSTCC="clang"
+
+_repository="android_kernel_lge_sm7250"
+_commit="f16d8d7345901bb1933f25acedeb60c07cf0d2bb"
+_config="config-$_flavor.$arch"
+source="
+	$pkgname-$_commit.tar.gz::https://github.com/LineageOS/$_repository/archive/$_commit.tar.gz
+	$_config
+	0001-drm-msm-sde-switch-off-forced-off-splash-display.patch
+	0002-input-gpio_keys-add-swivel_force.patch
+	0003-drm-msm-dsi-panel-model-in-edid-name.patch
+	0004-bluetooth-hci_h4-qualcomm-in-band-sleep.patch
+	0005-asoc-ops-fix-bounds-check-for-sx-controls.patch
+"
+
+builddir="$srcdir/$_repository-$_commit"
+_outdir="out"
+
+prepare() {
+	default_prepare
+	REPLACE_GCCH=0 . downstreamkernel_prepare
+}
+
+_dtbs="vendor/qcom/lito-mtp.dtb vendor/qcom/lito-v2-mtp.dtb"
+
+build() {
+	unset LDFLAGS
+	# Only the kernel and the two lito base dtbs: the board overlays come
+	# from the stock dtbo partition, and the in-tree dtc rejects the LG
+	# overlays (duplicate_label), so "make dtbs" is skipped on purpose.
+	# Modules: hci_uart (H4) for the Bluetooth UART, see device-lg-winglm's
+	# winglm-bt
+	make O="$_outdir" ARCH="$_carch" CC="${CC:-gcc}" \
+		KBUILD_BUILD_VERSION="$((pkgrel + 1 ))-postmarketOS" \
+		Image modules $_dtbs
+}
+
+package() {
+	downstreamkernel_package "$builddir" "$pkgdir" "$_carch" \
+		"$_flavor" "$_outdir"
+
+	make O="$_outdir" ARCH="$_carch" CC="${CC:-gcc}" \
+		INSTALL_MOD_PATH="$pkgdir" INSTALL_MOD_STRIP=1 modules_install
+	rm -f "$pkgdir"/lib/modules/*/build "$pkgdir"/lib/modules/*/source
+
+	local _dtb
+	for _dtb in $_dtbs; do
+		install -Dm644 "$builddir/$_outdir/arch/$_carch/boot/dts/$_dtb" \
+			"$pkgdir/boot/dtbs/$_dtb"
+	done
+
+	# Header v2 boot.img takes a single dtb blob: ship both lito base
+	# dtbs (v1 and v2 silicon) in one file, ABL selects by msm-id
+	local _qcom="$pkgdir"/boot/dtbs/vendor/qcom
+	cat "$_qcom"/lito-mtp.dtb "$_qcom"/lito-v2-mtp.dtb \
+		> "$_qcom"/lito-winglm.dtb
+}
+
+sha512sums="
+e5f52523935d6db081b0c6df3eedbeb01da125b20cd2045c128848bede2de42bc53a1584d9e5e86dd99714ef4d55c41c9257c1cf96ef12d3dc27e0ea3c9c3e43  linux-lg-winglm-f16d8d7345901bb1933f25acedeb60c07cf0d2bb.tar.gz
+c46ff90734d8c05e70b5bdd691ead0ef408a06fad8c7a61a36a98465379253f82f8982399930eb88c138ed820576fdf86c40e9d6056e9e87a3c42b4c2fa09fef  config-lg-winglm.aarch64
+aaf2a86199d25a2f9bf4483478e18067edeb99c42f59e094f4c390be639c2fa7624247083bc93376f313fe6cd3129047470ec904c6eabbc363dd7fb46fdd1910  0001-drm-msm-sde-switch-off-forced-off-splash-display.patch
+f1d7407eae76bd3617bfa073531d9752f000e1ce2eaf46d759479e6eb65c5d8d9b6b7b0c668a2b9899018e7ea8ccafd4636abf331736d98028308908bf1dd988  0002-input-gpio_keys-add-swivel_force.patch
+6749d45d725927e017e5398298e16fa10255212ed4895e69f48cfb7da7b994a030eb7f7ec51fa11eaac976af93ea649e0c52661e90bf9e9ebfe1ee13b731c0e1  0003-drm-msm-dsi-panel-model-in-edid-name.patch
+56e4914f8f47ae2beac75a1348d0aa8147be7e8054f88eecb0d2911eb89785ef813bf4fff50a4a1cf5a1a4d9a575bc12b5a84d747ec8999a88642e1098dcd69c  0004-bluetooth-hci_h4-qualcomm-in-band-sleep.patch
+e21abdea76f90cf7d52afeb0b8bf20314b66fc1a8b70e34064228c1c6dfdf61e6ba0b049241358e2f3e4c4e5a9cbf2652773b0731388ae535ef0ab3b5218db25  0005-asoc-ops-fix-bounds-check-for-sx-controls.patch
+"

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Screen brightness
+Name[ru]=Яркость экранов
+Comment=Brightness of the main and the swivel screen
+Comment[ru]=Яркость большого и малого экрана
+Exec=winglm-brightness
+Icon=display-brightness-symbolic
+Categories=Settings;HardwareSettings;
+Keywords=brightness;display;screen;swivel;
+X-Purism-FormFactor=Workstation;Mobile;

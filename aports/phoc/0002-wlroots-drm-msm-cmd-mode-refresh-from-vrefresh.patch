@@ -1,0 +1,26 @@
+From: winglm port
+Subject: [PATCH] wlroots: drm: use vrefresh for MSM command mode DSI panels
+
+The SDE mode clock is the DSI link pixel clock, so the computed refresh was 24.3 Hz (main panel) and 58.7 Hz (swivel panel) on the LG Wing. The panels refresh on TE at mode->vrefresh (60 Hz, plus a 30 Hz mode).
+---
+--- a/subprojects/wlroots-0.20.x/backend/drm/util.c	2026-11-16 01:00:10.955699590 +0400
++++ b/subprojects/wlroots-0.20.x/backend/drm/util.c	2026-11-16 01:00:10.986605477 +0400
+@@ -12,7 +12,18 @@
+ #include "backend/drm/drm.h"
+ #include "backend/drm/util.h"
+ 
++/* Qualcomm downstream (SDE) kernels flag DSI command mode panels with bit 30
++ * (DRM_MODE_FLAG_CMD_MODE_PANEL). Their mode clock is the DSI link pixel
++ * clock, not one that matches the timings: the panel refreshes on its TE
++ * signal at mode->vrefresh. Computing the rate from the clock gives
++ * e.g. 24.3 Hz for a 60 Hz panel. */
++#define MSM_DRM_MODE_FLAG_CMD_MODE_PANEL (1 << 30)
++
+ int32_t calculate_refresh_rate(const drmModeModeInfo *mode) {
++	if ((mode->flags & MSM_DRM_MODE_FLAG_CMD_MODE_PANEL) && mode->vrefresh > 0) {
++		return mode->vrefresh * 1000;
++	}
++
+ 	int32_t refresh = (mode->clock * 1000000LL / mode->htotal +
+ 		mode->vtotal / 2) / mode->vtotal;
+ 

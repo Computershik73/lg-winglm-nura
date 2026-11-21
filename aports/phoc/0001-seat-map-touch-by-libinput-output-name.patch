@@ -1,0 +1,44 @@
+From: winglm port
+Subject: [PATCH] seat: map touchscreens by the libinput output name (WL_OUTPUT)
+
+wlroots does not set wlr_touch.output_name for libinput devices, so the
+WL_OUTPUT udev property was ignored and every touchscreen fell back to the
+built-in output. On devices with two panels and two touchscreens (LG Wing)
+both ended up on the same output. Ask libinput for the output name when
+wlroots did not provide one.
+---
+--- a/src/seat.c	2026-11-16 00:25:28.680292393 +0400
++++ b/src/seat.c	2026-11-16 00:25:28.710317166 +0400
+@@ -470,17 +470,29 @@
+   PhocDesktop *desktop = phoc_server_get_desktop (phoc_server_get_default ());
+   struct wlr_input_device *wlr_device = phoc_input_device_get_device (device);
+   struct wlr_touch *touch;
++  const char *output_name;
+ 
+   if (wlr_device->type != WLR_INPUT_DEVICE_TOUCH)
+     return NULL;
+ 
+   touch = wlr_touch_from_input_device (wlr_device);
++  output_name = touch->output_name;
+ 
+-  if (!touch->output_name)
++  /* wlroots does not fill in output_name for libinput devices: ask libinput,
++   * which reads the WL_OUTPUT udev property. Devices with two touchscreens
++   * (LG Wing) need this to map each one to its own panel. */
++  if (!output_name && phoc_input_device_get_is_libinput (device)) {
++    struct libinput_device *ldev = phoc_input_device_get_libinput_device_handle (device);
++
++    if (ldev)
++      output_name = libinput_device_get_output_name (ldev);
++  }
++
++  if (!output_name)
+     return NULL;
+ 
+-  g_debug ("Looking up output %s", touch->output_name);
+-  return phoc_desktop_find_output_by_name (desktop, touch->output_name);
++  g_debug ("Looking up output %s", output_name);
++  return phoc_desktop_find_output_by_name (desktop, output_name);
+ }
+ 
+ 

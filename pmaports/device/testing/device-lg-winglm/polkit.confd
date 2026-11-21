@@ -1,0 +1,9 @@
+# LG Wing: run polkitd as its own user from the start.
+# This kernel has pidfd_open (Android backport) but a polkitd started as root
+# that drops its privileges can't read its own /proc/self/fdinfo, so it never
+# resolves a caller's pidfd ("Process not found"): every privileged request
+# (Wi-Fi passwords, NetworkManager's secret agents, ...) is then refused.
+# Started by OpenRC before the services that would D-Bus activate it as root.
+command_user="polkitd:polkitd"
+rc_after="elogind"
+rc_before="networkmanager modemmanager"

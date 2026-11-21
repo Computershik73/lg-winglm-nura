@@ -1,0 +1,163 @@
+#!/usr/bin/python3
+# LG Wing (WCN399x on icnss, downstream 4.19): send the WLAN board data file
+# to the WLAN firmware once it is up, the job of Android's proprietary
+# cnss-daemon. Without it the firmware never reports FW_READY and wlan0
+# never appears. Mainline ath10k does the same from the kernel.
+#
+# QMI over QRTR: look the WLFW service (0x45) up in the name service, then
+# send BDF_DOWNLOAD requests (0x0025) with the file in 6144 byte segments.
+# Runs as a daemon: the firmware comes back after every modem restart.
+#
+# usage: winglm-wlfw-bdf [--once] [--wlan-on] [board-data-file]
+#   --wlan-on   also load the WLAN driver (write ON to /dev/wlan) afterwards
+
+import os
+import socket
+import struct
+import sys
+import time
+
+BDF = "/run/msm-firmware-loader/target/wlan/qca_cld/bdwlan.bin"
+QRTR_PORT_CTRL = 0xFFFFFFFE
+QRTR_TYPE_NEW_SERVER = 4
+QRTR_TYPE_DEL_SERVER = 5
+QRTR_TYPE_NEW_LOOKUP = 10
+WLFW_SERVICE = 0x45
+BDF_DOWNLOAD = 0x0025
+CAL_REPORT = 0x0026
+SEGMENT = 6144
+AF_QIPCRTR = getattr(socket, "AF_QIPCRTR", 42)
+
+
+def log(msg):
+    print("winglm-wlfw-bdf: " + msg, flush=True)
+
+
+def ctrl(sock, cmd, service=0, instance=0, node=0, port=0):
+    local = sock.getsockname()[0]
+    sock.sendto(struct.pack("<5I", cmd, service, instance, node, port), (local, QRTR_PORT_CTRL))
+
+
+def wait_for_wlfw(timeout=None):
+    """(node, port) of the WLFW service, once the name service knows it."""
+    sock = socket.socket(AF_QIPCRTR, socket.SOCK_DGRAM)
+    sock.settimeout(timeout)
+    ctrl(sock, QRTR_TYPE_NEW_LOOKUP, WLFW_SERVICE)
+    try:
+        while True:
+            data, _ = sock.recvfrom(64)
+            if len(data) < 20:
+                continue
+            cmd, service, instance, node, port = struct.unpack("<5I", data[:20])
+            if cmd == QRTR_TYPE_NEW_SERVER and service == WLFW_SERVICE:
+                return sock, (node, port)
+    except socket.timeout:
+        sock.close()
+        return None, None
+
+
+def wait_gone(sock, addr):
+    """Block until the name service reports the server gone (modem restart)."""
+    sock.settimeout(None)
+    while True:
+        data, _ = sock.recvfrom(64)
+        if len(data) >= 20:
+            cmd, service, instance, node, port = struct.unpack("<5I", data[:20])
+            if cmd == QRTR_TYPE_DEL_SERVER and (node, port) == addr:
+                return
+
+
+def tlv(t, value):
+    return struct.pack("<BH", t, len(value)) + value
+
+
+def send_bdf(addr, path):
+    with open(path, "rb") as f:
+        bdf = f.read()
+    sock = socket.socket(AF_QIPCRTR, socket.SOCK_DGRAM)
+    sock.settimeout(5)
+    txn, seg, off = 1, 0, 0
+    while off < len(bdf) or seg == 0:
+        chunk = bdf[off:off + SEGMENT]
+        end = 1 if off + len(chunk) >= len(bdf) else 0
+        body = (tlv(0x01, struct.pack("<B", 1)) +               # valid
+                tlv(0x10, struct.pack("<I", 0)) +               # file id
+                tlv(0x11, struct.pack("<I", len(bdf))) +        # total size
+                tlv(0x12, struct.pack("<I", seg)) +             # segment
+                tlv(0x13, struct.pack("<H", len(chunk)) + chunk) +  # data
+                tlv(0x14, struct.pack("<B", end)))              # end
+        sock.sendto(struct.pack("<BHHH", 0, txn, BDF_DOWNLOAD, len(body)) + body, addr)
+        resp, _ = sock.recvfrom(4096)
+        mtype, rtxn, mid, mlen = struct.unpack("<BHHH", resp[:7])
+        result = error = None
+        p = 7
+        while p + 3 <= len(resp):
+            t, l = struct.unpack("<BH", resp[p:p + 3])
+            if t == 0x02 and l >= 4:
+                result, error = struct.unpack("<HH", resp[p + 3:p + 7])
+            p += 3 + l
+        # The firmware checks a CRC with end=1; some released files fail it
+        # (QMI_ERR_MALFORMED_MSG) but are used anyway, like ath10k does.
+        if result != 0 and not (end and error == 1):
+            raise RuntimeError("segment %d: result %s error %s" % (seg, result, error))
+        off += len(chunk)
+        seg += 1
+        txn += 1
+    log("sent %s (%d bytes, %d segments) to %d:%d" % (path, len(bdf), seg, addr[0], addr[1]))
+    # Calibration report (none from us), the firmware's go for FW_READY
+    body = tlv(0x01, struct.pack("<B", 0))
+    sock.sendto(struct.pack("<BHHH", 0, txn, CAL_REPORT, len(body)) + body, addr)
+    resp, _ = sock.recvfrom(4096)
+    log("calibration report answered (%d bytes)" % len(resp))
+    sock.close()
+
+
+def wlan_on():
+    """Load the qcacld driver (what Android's Wi-Fi HAL does). It registers
+    with icnss and gets probed once the firmware is ready; later firmware
+    restarts re-probe it by themselves."""
+    try:
+        with open("/sys/class/net/wlan0/ifindex"):
+            return
+    except OSError:
+        pass
+    try:
+        with open("/dev/wlan", "w") as f:
+            f.write("ON")
+        log("WLAN driver started")
+    except OSError as e:
+        # the write waits for the driver start and may time out, the
+        # probe still goes on
+        log("starting the WLAN driver: %s" % e)
+
+
+def main():
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    once = "--once" in sys.argv
+    path = args[0] if args else BDF
+    while True:
+        sock, addr = wait_for_wlfw(30 if once else None)
+        if addr is None:
+            log("no WLAN firmware service")
+            return 1
+        time.sleep(1)  # let icnss finish its handshake (capabilities) first
+        for attempt in range(5):
+            try:
+                if os.path.exists(path):
+                    send_bdf(addr, path)
+                    break
+                log("waiting for %s" % path)
+            except (OSError, RuntimeError) as e:
+                log("attempt %d failed: %s" % (attempt + 1, e))
+            time.sleep(2)
+        if "--wlan-on" in sys.argv:
+            wlan_on()
+        if once:
+            return 0
+        wait_gone(sock, addr)
+        sock.close()
+        log("WLAN firmware service gone, waiting for it to come back")
+
+
+if __name__ == "__main__":
+    sys.exit(main())

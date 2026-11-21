@@ -1,0 +1,278 @@
+#!/usr/bin/python3
+# LG Wing: follow the swivel with the two screens.
+#
+# Session service (XDG autostart, also in the phrog greeter). The swivel
+# position comes from the two hall sensors, exported by gpio_keys as
+# /sys/class/smartcover/swivel/state:
+#   0  half opened (moving)   - change nothing
+#   1  closed                 - main screen portrait; the swivel screen is
+#                               hidden: keep DSI-2 off, whoever switched it
+#                               on (the shell does when it wakes the screens)
+#   2  opened (T position)    - main screen turned to landscape, swivel
+#                               screen on, centred below it
+#
+# The main screen orientation is only changed when the swivel opens or
+# closes, so the shell's own rotation button keeps working in between.
+# Outputs are driven through the compositor (wlr-output-management via
+# wlr-randr). A disabled head reports no position or scale, so DSI-2 is
+# always switched on with an explicit position and scale; otherwise it comes
+# back at 0,0 with scale 1, on top of the main screen.
+#
+# Settings (GSettings org.postmarketos.winglm.swivel):
+#   rotate-main      turn the main screen to landscape in the T position
+#   main-transform   transform for that ("90" or "270")
+#   swivel-scale     scale of the swivel screen
+#   osk-on-swivel    on-screen keyboard on the swivel screen in the T position
+#                    (sets mobi.phosh.osk output, needs the patched stevia)
+# With gpio_keys.swivel_force=2 (boards without the swivel) the state is
+# always "opened".
+#
+# It also keeps the on-screen keyboard alive: gnome-session only restarts
+# stevia when it crashes, not when it exits cleanly (it quits on SIGTERM), and
+# a session without it has no way to type. When nobody owns sm.puri.OSK0 for
+# OSK_GRACE_S seconds, stevia is started again (output in
+# ~/.cache/winglm/stevia.log).
+
+import os
+import subprocess
+import sys
+import time
+
+import gi
+
+gi.require_version("GUdev", "1.0")
+from gi.repository import Gio, GLib, GUdev  # noqa: E402
+
+STATE = "/sys/class/smartcover/swivel/state"
+SCHEMA = "org.postmarketos.winglm.swivel"
+OSK_SCHEMA = "mobi.phosh.osk"
+MAIN, SWIVEL = "DSI-1", "DSI-2"
+HALF, CLOSED, OPENED = 0, 1, 2
+POLL_S = 1  # also catches the shell blanking / waking the screens
+ROTATED = ("90", "270", "flipped-90", "flipped-270")
+OSK_BUS_NAME = "sm.puri.OSK0"
+OSK_COMMAND = ["/usr/bin/phosh-osk-stevia", "--allow-replacement"]
+OSK_GRACE_S = 15           # gnome-session starts it itself at login
+OSK_MAX_RESTARTS = 5       # per OSK_RESTART_WINDOW_S, so a crash loop stops
+OSK_RESTART_WINDOW_S = 600
+
+
+def read_state():
+    try:
+        with open(STATE) as f:
+            return int(f.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def heads():
+    """{name: {"enabled", "pos": (x, y), "scale", "size": (w, h), "transform"}}"""
+    try:
+        out = subprocess.run(["wlr-randr"], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    result, cur = {}, None
+    for line in out.splitlines():
+        if line and not line.startswith(" "):
+            cur = result.setdefault(line.split()[0], {"enabled": False})
+            continue
+        if cur is None:
+            continue
+        s = line.strip()
+        if s.startswith("Enabled:"):
+            cur["enabled"] = s.split(":", 1)[1].strip() == "yes"
+        elif s.startswith("Position:"):
+            x, y = s.split(":", 1)[1].strip().split(",")
+            cur["pos"] = (int(x), int(y))
+        elif s.startswith("Scale:"):
+            cur["scale"] = float(s.split(":", 1)[1])
+        elif s.startswith("Transform:"):
+            cur["transform"] = s.split(":", 1)[1].strip()
+        elif "current" in s and " px" in s:
+            w, h = s.split(" px")[0].split("x")
+            cur["size"] = (int(w), int(h))
+    return result or None
+
+
+def logical_size(head, transform=None):
+    w, h = head.get("size", (0, 0))
+    if (transform or head.get("transform", "normal")) in ROTATED:
+        w, h = h, w
+    scale = head.get("scale") or 1.0
+    return round(w / scale), round(h / scale)
+
+
+def randr(output, *args):
+    r = subprocess.run(["wlr-randr", "--output", output, *args],
+                       capture_output=True, text=True, timeout=10)
+    if r.returncode != 0:
+        print("wlr-randr %s %s failed: %s" % (output, " ".join(args), r.stderr.strip()),
+              file=sys.stderr, flush=True)
+    return r.returncode == 0
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+class OskWatchdog:
+    """Start the on-screen keyboard again when it is gone for good."""
+
+    def __init__(self):
+        self.timer = 0
+        self.starts = []
+        if not os.access(OSK_COMMAND[0], os.X_OK):
+            return
+        Gio.bus_watch_name(Gio.BusType.SESSION, OSK_BUS_NAME, Gio.BusNameWatcherFlags.NONE,
+                           self.on_appeared, self.on_vanished)
+
+    def on_appeared(self, *args):
+        if self.timer:
+            GLib.source_remove(self.timer)
+            self.timer = 0
+
+    def on_vanished(self, *args):
+        if not self.timer:
+            self.timer = GLib.timeout_add_seconds(OSK_GRACE_S, self.restart)
+
+    def restart(self):
+        self.timer = 0
+        now = time.monotonic()
+        self.starts = [t for t in self.starts if now - t < OSK_RESTART_WINDOW_S]
+        if len(self.starts) >= OSK_MAX_RESTARTS:
+            log("on-screen keyboard keeps exiting, not starting it again")
+            return GLib.SOURCE_REMOVE
+        self.starts.append(now)
+        logdir = os.path.join(GLib.get_user_cache_dir(), "winglm")
+        try:
+            os.makedirs(logdir, exist_ok=True)
+            path = os.path.join(logdir, "stevia.log")
+            if os.path.exists(path):
+                os.replace(path, path + ".old")
+            out = open(path, "w")
+        except OSError:
+            out = subprocess.DEVNULL
+        try:
+            subprocess.Popen(OSK_COMMAND, stdin=subprocess.DEVNULL, stdout=out,
+                             stderr=subprocess.STDOUT, start_new_session=True)
+            log("on-screen keyboard was gone, started it again")
+        except OSError as e:
+            log("could not start the on-screen keyboard: %s" % e)
+        if out is not subprocess.DEVNULL:
+            out.close()
+        return GLib.SOURCE_REMOVE
+
+
+class Swivel:
+    def __init__(self):
+        source = Gio.SettingsSchemaSource.get_default()
+        self.settings = Gio.Settings.new(SCHEMA) if source and source.lookup(SCHEMA, True) else None
+        osk = source.lookup(OSK_SCHEMA, True) if source else None
+        self.osk = Gio.Settings.new(OSK_SCHEMA) if osk and osk.has_key("output") else None
+        self.osk_output = None    # what we last asked stevia for
+        self.last_state = None
+        self.pending = None       # CLOSED/OPENED transition not applied yet
+        self.main_was_on = None
+        self.udev = GUdev.Client(subsystems=["smartcover"])
+        self.udev.connect("uevent", lambda *a: self.update())
+        GLib.timeout_add_seconds(POLL_S, self.poll)
+        self.update()
+
+    def setting(self, getter, key, default):
+        if self.settings is None or not self.settings.props.settings_schema.has_key(key):
+            return default
+        return getattr(self.settings, getter)(key)
+
+    def place_osk(self, state):
+        """Keyboard on the swivel screen in the T position, else where the
+        compositor puts it. Only set on changes, so a manual choice sticks
+        until the swivel moves."""
+        if self.osk is None or state not in (CLOSED, OPENED):
+            return
+        on_swivel = state == OPENED and self.setting("get_boolean", "osk-on-swivel", True)
+        want = SWIVEL if on_swivel else ""
+        if want == self.osk_output:
+            return
+        self.osk_output = want
+        if self.osk.get_string("output") != want:
+            self.osk.set_string("output", want)
+            Gio.Settings.sync()
+            log("keyboard on %s" % (want or "the compositor's choice"))
+
+    def swivel_geometry(self, main, swivel):
+        """Swivel screen centred below the main screen."""
+        scale = self.setting("get_double", "swivel-scale", 3.0)
+        mx, my = main.get("pos", (0, 0))
+        mw, mh = logical_size(main)
+        sw = round(swivel.get("size", (1080, 1240))[0] / scale)
+        return mx + max(0, (mw - sw) // 2), my + mh, scale
+
+    def set_main_transform(self, transform):
+        if randr(MAIN, "--transform", transform):
+            log("%s transform %s" % (MAIN, transform))
+            return True
+        return False
+
+    def update(self):
+        state = read_state()
+        self.place_osk(state)
+        h = heads()
+        if state is None or h is None or MAIN not in h or SWIVEL not in h:
+            return
+        main, swivel = h[MAIN], h[SWIVEL]
+
+        if state in (CLOSED, OPENED) and state != self.last_state:
+            self.last_state = state
+            self.pending = state
+        main_woke = main["enabled"] and self.main_was_on is False
+        self.main_was_on = main["enabled"]
+
+        rotate = self.setting("get_boolean", "rotate-main", True)
+        landscape = self.setting("get_string", "main-transform", "90")
+
+        if state == CLOSED:
+            if swivel["enabled"] and randr(SWIVEL, "--off"):
+                log("swivel closed: %s off" % SWIVEL)
+            # a blanked (disabled) head takes no transform: wait for wake-up
+            if self.pending == CLOSED and main["enabled"]:
+                if not rotate or main.get("transform", "normal") == "normal" \
+                        or self.set_main_transform("normal"):
+                    self.pending = None
+            return
+
+        if state != OPENED or not main["enabled"]:
+            return  # moving, or screens blanked: done when the main screen wakes
+
+        if self.pending == OPENED:
+            if rotate and main.get("transform") != landscape:
+                if not self.set_main_transform(landscape):
+                    return
+                h = heads() or h  # main size and the layout changed
+                main, swivel = h[MAIN], h[SWIVEL]
+            x, y, scale = self.swivel_geometry(main, swivel)
+            if not swivel["enabled"]:
+                ok = randr(SWIVEL, "--on", "--pos", "%d,%d" % (x, y), "--scale", "%g" % scale)
+            elif swivel.get("pos") != (x, y):
+                # the main screen turned: put the swivel screen back below it
+                ok = randr(SWIVEL, "--pos", "%d,%d" % (x, y), "--scale", "%g" % scale)
+            else:
+                ok = True
+            if ok:
+                log("swivel opened: %s at %d,%d scale %g" % (SWIVEL, x, y, scale))
+                self.pending = None
+        elif main_woke and not swivel["enabled"]:
+            x, y, scale = self.swivel_geometry(main, swivel)
+            if randr(SWIVEL, "--on", "--pos", "%d,%d" % (x, y), "--scale", "%g" % scale):
+                log("screens woke up: %s on at %d,%d scale %g" % (SWIVEL, x, y, scale))
+
+    def poll(self):
+        self.update()
+        return GLib.SOURCE_CONTINUE
+
+
+if __name__ == "__main__":
+    if read_state() is None:
+        sys.exit("no swivel state at %s" % STATE)
+    Swivel()
+    OskWatchdog()
+    GLib.MainLoop().run()

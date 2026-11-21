@@ -1,0 +1,171 @@
+From: winglm port
+Subject: [PATCH] drm/msm/sde: switch off a forced-off display left on by the bootloader
+
+With video=DSI-1:d the cont-splash handoff of DSI-1 probed a forced-off
+connector, got no modes and used list_first_entry() on the empty list.
+crtc-0 stayed half set up with the DSI-1 encoder attached, so the other
+display never got a frame when it was placed on crtc-0.
+
+Probe the connector unforced for the handoff, then finish the handoff
+with a null commit and disable the CRTC so the panel powers down.
+---
+--- a/techpack/display/msm/sde/sde_kms.c	2026-11-15 22:40:28.437126512 +0400
++++ b/techpack/display/msm/sde/sde_kms.c	2026-11-15 22:40:28.440011480 +0400
+@@ -2611,6 +2611,92 @@
+ 	return 0;
+ }
+ 
++static void _sde_kms_null_commit(struct drm_device *dev,
++		struct drm_encoder *enc);
++
++/*
++ * The bootloader left this display on, but its connector is forced off
++ * (video=<connector>:d), so no client will ever take it over. Finish the
++ * handoff with a null commit, which releases the splash memory and the
++ * splash power vote through the normal path, then disable the CRTC. That
++ * powers the panel down and frees the CRTC for the other display.
++ */
++static void _sde_kms_splash_switch_off(struct drm_device *dev,
++		struct drm_encoder *enc, struct drm_connector *conn)
++{
++	struct drm_modeset_acquire_ctx ctx;
++	struct drm_atomic_state *state = NULL;
++	struct drm_connector_state *conn_state;
++	struct drm_crtc_state *crtc_state;
++	struct drm_crtc *crtc;
++	int ret;
++
++	_sde_kms_null_commit(dev, enc);
++
++	drm_modeset_acquire_init(&ctx, 0);
++retry:
++	ret = drm_modeset_lock_all_ctx(dev, &ctx);
++	if (ret == -EDEADLK) {
++		drm_modeset_backoff(&ctx);
++		goto retry;
++	}
++	if (ret)
++		goto fini;
++
++	crtc = conn->state->crtc;
++	if (!crtc) {
++		ret = -ENOENT;
++		goto unlock;
++	}
++
++	state = drm_atomic_state_alloc(dev);
++	if (!state) {
++		ret = -ENOMEM;
++		goto unlock;
++	}
++	state->acquire_ctx = &ctx;
++
++	conn_state = drm_atomic_get_connector_state(state, conn);
++	if (IS_ERR(conn_state)) {
++		ret = PTR_ERR(conn_state);
++		goto put;
++	}
++	ret = drm_atomic_set_crtc_for_connector(conn_state, NULL);
++	if (ret)
++		goto put;
++
++	crtc_state = drm_atomic_get_crtc_state(state, crtc);
++	if (IS_ERR(crtc_state)) {
++		ret = PTR_ERR(crtc_state);
++		goto put;
++	}
++	crtc_state->active = false;
++	ret = drm_atomic_set_mode_for_crtc(crtc_state, NULL);
++	if (ret)
++		goto put;
++
++	ret = drm_atomic_commit(state);
++put:
++	drm_atomic_state_put(state);
++unlock:
++	drm_modeset_drop_locks(&ctx);
++fini:
++	drm_modeset_acquire_fini(&ctx);
++
++	/* report the forced state again now that the display is off */
++	mutex_lock(&dev->mode_config.mutex);
++	conn->funcs->fill_modes(conn, dev->mode_config.max_width,
++			dev->mode_config.max_height);
++	mutex_unlock(&dev->mode_config.mutex);
++
++	if (ret)
++		SDE_ERROR("%s: switching off forced-off splash failed: %d\n",
++				conn->name, ret);
++	else
++		DRM_INFO("%s is forced off: splash handed off, display off\n",
++				conn->name);
++}
++
+ static int sde_kms_cont_splash_config(struct msm_kms *kms)
+ {
+ 	void *display;
+@@ -2627,6 +2713,10 @@
+ 	struct drm_connector *connector = NULL;
+ 	struct sde_connector *sde_conn = NULL;
+ 	struct sde_splash_display *splash_display;
++	struct drm_encoder *off_enc[MAX_DSI_DISPLAYS];
++	struct drm_connector *off_conn[MAX_DSI_DISPLAYS];
++	enum drm_connector_force force;
++	int off_cnt = 0;
+ 
+ 	if (!kms) {
+ 		SDE_ERROR("invalid kms\n");
+@@ -2713,17 +2803,43 @@
+ 			return -EINVAL;
+ 		}
+ 
++		/*
++		 * A connector forced off has no modes, so probe it as if it
++		 * were not forced: the handoff needs the mode the bootloader
++		 * is actually driving.
++		 */
++		force = connector->force;
++		if (force == DRM_FORCE_OFF)
++			connector->force = DRM_FORCE_UNSPECIFIED;
++
+ 		if (connector->funcs->fill_modes) {
+ 			connector->funcs->fill_modes(connector,
+ 					dev->mode_config.max_width,
+ 					dev->mode_config.max_height);
+ 		} else {
++			connector->force = force;
+ 			SDE_ERROR("fill_modes api not defined\n");
+ 			mutex_unlock(&dev->mode_config.mutex);
+ 			return -EINVAL;
+ 		}
++		connector->force = force;
+ 		mutex_unlock(&dev->mode_config.mutex);
+ 
++		if (list_empty(&connector->modes)) {
++			/* list_first_entry() below would return garbage */
++			SDE_ERROR("%s: no modes, skipping splash handoff\n",
++					connector->name);
++			encoder->crtc = NULL;
++			splash_display->encoder = NULL;
++			continue;
++		}
++
++		if (force == DRM_FORCE_OFF && off_cnt < MAX_DSI_DISPLAYS) {
++			off_enc[off_cnt] = encoder;
++			off_conn[off_cnt] = connector;
++			off_cnt++;
++		}
++
+ 		crtc->state->encoder_mask = (1 << drm_encoder_index(encoder));
+ 
+ 		/* currently consider modes[0] as the preferred mode */
+@@ -2761,6 +2877,9 @@
+ 		}
+ 	}
+ 
++	for (i = 0; i < off_cnt; i++)
++		_sde_kms_splash_switch_off(dev, off_enc[i], off_conn[i]);
++
+ 	return rc;
+ }
+ 

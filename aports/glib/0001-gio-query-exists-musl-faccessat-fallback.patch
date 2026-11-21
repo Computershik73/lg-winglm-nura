@@ -1,0 +1,25 @@
+From: winglm port
+Subject: [PATCH] gio: g_local_file_query_exists: fall back to lstat on EINVAL
+
+glib 2.90 calls faccessat(AT_EACCESS | AT_SYMLINK_NOFOLLOW). musl only
+accepts AT_EACCESS and returns EINVAL, so g_file_query_exists() said FALSE
+for every path on Alpine. libxmlb then tried to create the existing
+appstream cache dir, appstream 1.2.1 double-freed the resulting GError and
+phosh/phrog crashed at startup.
+---
+--- a/gio/glocalfile.c	2026-11-16 00:11:27.145677227 +0400
++++ b/gio/glocalfile.c	2026-11-16 00:11:27.184051666 +0400
+@@ -1294,7 +1294,12 @@
+     }
+   else if G_UNLIKELY (errno == EINVAL)
+     {
+-      g_critical ("g_local_file_query_exists: faccessat doesn't support supplied flags");
++      /* musl's faccessat() only accepts AT_EACCESS and fails with EINVAL
++       * when AT_SYMLINK_NOFOLLOW is passed. Answer the question with
++       * lstat() instead, like the fallback implementation does. */
++      GStatBuf buf;
++
++      return g_lstat (local->filename, &buf) == 0;
+     }
+ 
+   return FALSE;

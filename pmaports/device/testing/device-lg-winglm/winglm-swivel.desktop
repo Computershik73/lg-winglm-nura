@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Swivel screen
+Comment=Switch the swivel screen off while the swivel is closed
+Exec=winglm-swivel
+NoDisplay=true
+OnlyShowIn=Phosh;GNOME;
+X-GNOME-AutoRestart=true

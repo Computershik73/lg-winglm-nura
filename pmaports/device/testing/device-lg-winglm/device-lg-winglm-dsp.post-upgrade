@@ -1,0 +1,20 @@
+#!/bin/sh
+# name service early (tqftpserv starts in boot), the rest in default
+rc-update add qrtr-ns boot >/dev/null 2>&1 || true
+for s in pd-mapper winglm-adsp winglm-rmtfs winglm-modem winglm-wlan winglm-bt winglm-vss q6voiced; do
+	rc-update add $s default >/dev/null 2>&1 || true
+done
+# ModemManager and BlueZ were parked while there was no modem / Bluetooth
+rc-update del modemmanager winglm-off >/dev/null 2>&1 || true
+rc-update add modemmanager default >/dev/null 2>&1 || true
+rc-update del bluetooth winglm-off >/dev/null 2>&1 || true
+rc-update add bluetooth default >/dev/null 2>&1 || true
+# The phrog greeter doesn't need sound, but its PulseAudio daemonizes, keeps
+# running after the login and holds the sound card: no autospawn for it
+h=$(getent passwd greetd | cut -d: -f6)
+if [ -n "$h" ] && [ -d "$h" ]; then
+	mkdir -p "$h/.config/pulse"
+	echo "autospawn = no" > "$h/.config/pulse/client.conf"
+	chown -R greetd: "$h/.config" 2>/dev/null || true
+fi
+exit 0

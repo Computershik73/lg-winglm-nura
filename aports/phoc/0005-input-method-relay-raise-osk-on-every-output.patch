@@ -1,0 +1,33 @@
+From: winglm port
+Subject: [PATCH] input-method-relay: raise the OSK on every output
+
+When a layer surface (e.g. the lock screen) wants text input the OSK is
+moved to the overlay layer so it isn't hidden. That only happened on the
+layer surface's own output, but the OSK may be on another one (LG Wing:
+keyboard on the swivel screen below the main screen).
+---
+--- a/src/input-method-relay.c	2026-11-16 04:04:19.984436257 +0400
++++ b/src/input-method-relay.c	2026-11-16 04:04:20.007468859 +0400
+@@ -41,7 +41,9 @@
+ static void
+ elevate_osk (struct wlr_surface *surface)
+ {
++  PhocDesktop *desktop = phoc_server_get_desktop (phoc_server_get_default ());
+   struct wlr_layer_surface_v1 *layer;
++  PhocOutput *output;
+ 
+   if (!surface)
+     return;
+@@ -50,7 +52,11 @@
+   if (!layer)
+     return;
+ 
+-  phoc_layer_shell_update_osk (PHOC_OUTPUT (layer->output->data), TRUE);
++  /* The OSK can be on another output than the layer surface that wants
++   * input (e.g. a lock screen on the main screen and the OSK on a second
++   * built-in one) */
++  wl_list_for_each (output, &desktop->outputs, link)
++    phoc_layer_shell_update_osk (output, TRUE);
+ }
+ 
+ 

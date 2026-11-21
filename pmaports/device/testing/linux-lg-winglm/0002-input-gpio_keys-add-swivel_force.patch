@@ -1,0 +1,59 @@
+From: winglm port
+Subject: [PATCH] input: gpio_keys: add swivel_force to pin the LG swivel state
+
+The sub touch (SW42000) enables its interrupt after a reset only when the
+swivel reads "opened", and disables it on "half opened". A board without
+the swivel mechanism reads "half opened" or never reports a change, so the
+small screen loses touch.
+
+gpio_keys.swivel_force=<0|1|2> reports a fixed state to the touch drivers
+once at probe and ignores the hall sensors afterwards.
+---
+--- a/drivers/input/keyboard/gpio_keys.c	2026-11-15 23:08:21.878210338 +0400
++++ b/drivers/input/keyboard/gpio_keys.c	2026-11-15 23:08:21.889004145 +0400
+@@ -81,6 +81,17 @@
+ 	.state_front = 0,
+ 	.state_back = 0,
+ };
++
++/*
++ * gpio_keys.swivel_force=<0|1|2> (half opened, closed, opened) pins the
++ * swivel state whatever the hall sensors read. A board without the swivel
++ * mechanism reads "half opened", or never reports a change at all, and the
++ * sub touch then keeps its interrupt disabled: it only enables it after a
++ * reset when the state is "opened".
++ */
++static int swivel_force = -1;
++module_param(swivel_force, int, 0444);
++static bool swivel_force_done;
+ #else
+ struct hallic_dev sdev = {
+ 	.name = "smartcover",
+@@ -618,6 +629,27 @@
+ 			input_event(input, type, button->code, button->value);
+ 	} else {
+ #if IS_ENABLED(CONFIG_LGE_SWIVEL_HALLIC_SUPPORT)
++		if (swivel_force >= SWIVEL_HALF_OPENED &&
++				swivel_force <= SWIVEL_OPENED &&
++				(!strncmp(bdata->button->desc, "swivel_start", 12) ||
++				 !strncmp(bdata->button->desc, "swivel_end", 10))) {
++			/* report the forced state once, ignore the sensors */
++			if (swivel_force_done)
++				return;
++			swivel_force_done = true;
++			pr_info("[Touch] swivel state forced to %d\n", swivel_force);
++			hallic_set_state(&swivel_dev, swivel_force);
++			swivel_dev.state = swivel_force;
++#ifdef CONFIG_LGE_TOUCH_CORE_SUB
++			touch_notify_swivel((u32)swivel_force);
++			touch_sub_notify_swivel((u32)swivel_force);
++#endif
++			input_event(input, type, *bdata->code,
++					swivel_force == SWIVEL_OPENED ? 0 : 1);
++			input_sync(input);
++			return;
++		}
++
+ 		if (!strncmp(bdata->button->desc, "swivel_start", 12)) {
+ 			pr_info("[Display] swivel_start dev.state = %d, state_front = %d, state_back = %d, state = %d\n", swivel_dev.state, swivel_dev.state_front, swivel_dev.state_back, state);
+ 			if (swivel_dev.state_front != state) {

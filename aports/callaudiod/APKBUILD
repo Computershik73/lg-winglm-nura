@@ -1,0 +1,35 @@
+# Forked from Alpine community/callaudiod for the LG Wing: speaker switching
+# with PulseAudio's one-profile-per-UCM-device and DSP voice mic mute (0001)
+pkgname=callaudiod
+pkgver=0.1.99
+pkgrel=1
+pkgdesc="Call audio routing daemon"
+url="https://gitlab.com/mobian1/callaudiod"
+arch="all"
+license="GPL-3.0-or-later"
+makedepends="
+	alsa-lib-dev
+	appstream-dev
+	glib-dev
+	meson
+	pulseaudio-dev
+	"
+subpackages="$pkgname-dev $pkgname-libs"
+source="https://gitlab.com/mobian1/callaudiod/-/archive/$pkgver/callaudiod-$pkgver.tar.gz
+	0001-pulse-profile-per-device-and-dsp-voice-mute.patch
+	"
+options="!check" # no tests
+
+build() {
+	abuild-meson . output
+	meson compile -C output
+}
+
+package() {
+	DESTDIR="$pkgdir" meson install --no-rebuild -C output
+}
+
+sha512sums="
+8243189cae4ea2d37f7773eaaf1f66b80357ca2803adcaed3eb57f57fce80c13e0667f1be7bac00256318f2cc2f790c388f1d56496d22f34377c4d6a0b43e5c0  callaudiod-0.1.99.tar.gz
+3572de9a9421d36d5ceb16877b9a672855044a8234a4a11f9e86175aab1461286e34a1006f147bb996054b962ae4d96fed5c64f8830fd0bcae02be859d96735e  0001-pulse-profile-per-device-and-dsp-voice-mute.patch
+"

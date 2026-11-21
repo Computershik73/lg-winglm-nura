@@ -1,0 +1,6 @@
+# LG Wing: winglm-swivel turns the main screen with the swivel and the lock
+# screen puts its keypad on the swivel screen in the T position, so phosh
+# must not force portrait while locked (needs the patched phosh, ignored
+# otherwise)
+[sm.puri.phosh.lockscreen]
+force-portrait=false

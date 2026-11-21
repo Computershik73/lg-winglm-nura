@@ -1,0 +1,14 @@
+#!/sbin/openrc-run
+
+description="LG Wing: WLAN board data for the firmware, WLAN driver start"
+
+supervisor=supervise-daemon
+command=/usr/bin/winglm-wlfw-bdf
+command_args="--wlan-on"
+output_log=/var/log/winglm-wlan.log
+error_log=/var/log/winglm-wlan.log
+
+depend() {
+	need qrtr-ns winglm-modem
+	before networkmanager
+}

@@ -1,0 +1,13 @@
+#!/sbin/openrc-run
+
+description="Qualcomm protection domain mapper"
+
+command=/usr/bin/pd-mapper
+command_background=true
+pidfile="/run/${RC_SVCNAME}.pid"
+
+depend() {
+	need qrtr-ns
+	# the firmware (and its jsons) must be in place
+	after msm-firmware-loader
+}

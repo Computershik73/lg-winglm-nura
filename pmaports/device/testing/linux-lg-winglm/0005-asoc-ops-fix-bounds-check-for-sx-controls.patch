@@ -1,0 +1,29 @@
+From: winglm port
+Subject: [PATCH] ASoC: ops: fix the bounds check of _sx controls
+
+The values of an _sx control go from 0 to max - min (what info reports,
+0..124 for the WCD/bolero digital gains declared with -84, 40), but put
+rejected everything above max (40): only -84..-44 dB could be set, 0 dB
+not at all. Same fix as upstream 698813ba8c58 ("ASoC: ops: Fix bounds
+check for _sx controls").
+---
+--- a/sound/soc/soc-ops.c	2026-11-17 02:33:37.206588747 +0400
++++ b/sound/soc/soc-ops.c	2026-11-17 02:33:37.218745272 +0400
+@@ -446,7 +446,7 @@
+ 	val = ucontrol->value.integer.value[0];
+ 	if (mc->platform_max && val > mc->platform_max)
+ 		return -EINVAL;
+-	if (val > max)
++	if (val > max - min)
+ 		return -EINVAL;
+ 	if (val < 0)
+ 		return -EINVAL;
+@@ -463,7 +463,7 @@
+ 
+ 		if (mc->platform_max && val2 > mc->platform_max)
+ 			return -EINVAL;
+-		if (val2 > max)
++		if (val2 > max - min)
+ 			return -EINVAL;
+ 
+ 		val_mask = mask << rshift;

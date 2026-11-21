@@ -1,0 +1,62 @@
+#!/bin/sh
+# LG Wing (downstream 4.19): get the remote processors' firmware ready.
+#
+# msm-firmware-loader mounts modem_a, dsp_a, persist and (with
+# make-dynpart-mappings) vendor_a read-only and points the kernel at
+# /run/msm-firmware-loader/target. This adds what Android set up elsewhere:
+#  - qcacld's host files: vendor's wlan/qca_cld links point to LG's Android
+#    persist paths; use the vendor copies and a generated wlan_mac.bin
+#    (stable, locally administered, derived from the SoC serial)
+#  - subsystem crashes restart only that subsystem, not the phone
+#  - the EFS file copies rmtfs serves the modem (made once, READ-ONLY from
+#    modemst1/modemst2/fsg/fsc: the partitions themselves are never written)
+
+T=/run/msm-firmware-loader/target
+V=/run/msm-firmware-loader/mnt/vendor_a
+EFS=/var/lib/rmtfs
+
+wlan_files() {
+	[ -d "$T" ] || return 0
+	[ -L "$T/wlan" ] && rm "$T/wlan"
+	mkdir -p "$T/wlan/qca_cld"
+	for f in WCNSS_qcom_cfg.ini bdwlan.bin; do
+		[ -e "$V/etc/wifi/$f" ] && ln -sf "$V/etc/wifi/$f" "$T/wlan/qca_cld/$f"
+	done
+	ser=$(cat /sys/devices/soc0/serial_number 2>/dev/null)
+	h=$(printf 'winglm-wlan-%s' "$ser" | sha256sum | cut -c1-12)
+	first=$(printf '%02X' $(( (0x$(echo "$h" | cut -c1-2) & 0xfc) | 0x02 )))
+	mid=$(echo "$h" | cut -c3-10 | tr a-f A-F)
+	last=$(echo "$h" | cut -c11-12)
+	i=0
+	while [ $i -lt 4 ]; do
+		printf 'Intf%dMacAddress=%s%s%02X\n' $i "$first" "$mid" $(( (0x$last + i) & 0xff ))
+		i=$((i + 1))
+	done > /run/winglm-wlan_mac.bin
+	echo END >> /run/winglm-wlan_mac.bin
+	ln -sf /run/winglm-wlan_mac.bin "$T/wlan/qca_cld/wlan_mac.bin"
+}
+
+restart_levels() {
+	for s in /sys/bus/msm_subsys/devices/*; do
+		case "$(cat "$s/name" 2>/dev/null)" in
+		adsp|cdsp|modem|ipa_fws)
+			echo RELATED > "$s/restart_level" 2>/dev/null ;;
+		esac
+	done
+}
+
+efs_copies() {
+	mkdir -p "$EFS"
+	for m in "modemst1 modem_fs1" "modemst2 modem_fs2" "fsg modem_fsg" "fsc modem_fsc"; do
+		set -- $m
+		[ -s "$EFS/$2" ] && continue
+		dd if="/dev/disk/by-partlabel/$1" of="$EFS/$2.tmp" bs=128k status=none &&
+			mv "$EFS/$2.tmp" "$EFS/$2"
+	done
+}
+
+case "$1" in
+firmware) wlan_files; restart_levels ;;
+efs) efs_copies ;;
+*) echo "usage: $0 firmware|efs" >&2; exit 1 ;;
+esac

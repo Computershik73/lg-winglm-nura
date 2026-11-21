@@ -1,0 +1,21 @@
+From: winglm port
+Subject: [PATCH] wlroots: gles2: wait for the GPU when there is no sync timeline
+
+KGSL attaches no implicit fences to dma-bufs, so KMS scanned out unfinished frames (black staircase stripes during animations).
+---
+--- a/subprojects/wlroots-0.20.x/render/gles2/pass.c	2026-11-16 01:00:11.021681404 +0400
++++ b/subprojects/wlroots-0.20.x/render/gles2/pass.c	2026-11-16 01:00:11.053264013 +0400
+@@ -57,7 +57,12 @@
+ 			goto out;
+ 		}
+ 	} else {
+-		glFlush();
++		/* Without a timeline the buffer goes to KMS relying on implicit
++		 * sync. Qualcomm KGSL (turnip/zink) attaches no implicit fences to
++		 * exported dma-bufs, so the display engine scanned out frames the
++		 * GPU had not finished: black, staircase-shaped bins during
++		 * animations. Wait for the GPU instead. */
++		glFinish();
+ 	}
+ 
+ 	ok = true;

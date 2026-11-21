@@ -1,0 +1,466 @@
+From: winglm port
+Subject: [PATCH] lockscreen: keypad on the second screen when the main one is landscape
+
+A lockscreen in landscape has no room for the PIN keypad (LG Wing in its
+T position: 360 logical pixels high). When another built-in screen shows
+a lock shield (the Wing swivel screen below the main one), move the keypad
+and the unlock button there whenever the unlock box is shown (greeters
+show it once a user is picked). The keypad keeps typing into the PIN entry
+on the main screen, which switches to the unlock page. Landscape is judged
+by the lockscreen size: monitors report their transform only once.
+
+The keypad goes back to the lockscreen before either side is destroyed.
+Shields hold a reference on their monitor and the compositor closing a
+shield drops it from the manager list: outputs switched off and on
+quickly left dangling monitor and shield pointers behind. A monitor gets
+at most one shield, so no empty shield can end up on top of the keypad.
+---
+--- a/src/lockscreen.h	2026-11-16 03:22:13.002206594 +0400
++++ b/src/lockscreen.h	2026-11-16 03:22:13.025944288 +0400
+@@ -68,4 +68,7 @@
+ 
+ void                phosh_lockscreen_add_extra_page (PhoshLockscreen *self, GtkWidget *widget);
+ 
++void                phosh_lockscreen_set_keypad_container (PhoshLockscreen *self,
++                                                           GtkContainer    *container);
++
+ G_END_DECLS
+--- a/src/lockscreen.c	2026-11-16 03:22:12.999715934 +0400
++++ b/src/lockscreen.c	2026-11-16 03:22:13.026914282 +0400
+@@ -100,6 +100,8 @@
+   GtkWidget          *lbl_unlock_status;
+   GtkWidget          *btn_submit;
+   GtkWidget          *btn_keyboard;
++  GtkWidget          *keypad_container; /* where the keypad should go, if anywhere */
++  gboolean            keypad_external;  /* the keypad is there right now */
+   guint idle_timer;
+   gint64 last_input;
+   PhoshAuth          *auth;
+@@ -129,6 +131,9 @@
+ 
+ G_DEFINE_TYPE_WITH_PRIVATE (PhoshLockscreen, phosh_lockscreen, PHOSH_TYPE_LAYER_SURFACE)
+ 
++static void apply_keypad_placement (PhoshLockscreen *self);
++static void on_keypad_container_destroy (PhoshLockscreen *self);
++
+ 
+ static gboolean
+ is_valid (PhoshLockscreen *self, GtkGesture *gesture, double *x_center)
+@@ -466,6 +471,12 @@
+   length = gtk_entry_get_text_length (GTK_ENTRY (priv->entry_pin));
+ 
+   gtk_widget_set_sensitive (priv->btn_submit, length != 0);
++
++  /* The keypad sits on another screen and stays usable on every page:
++   * show the entry it types into */
++  if (priv->keypad_external && length != 0 &&
++      phosh_lockscreen_get_page (self) != PHOSH_LOCKSCREEN_PAGE_UNLOCK)
++    show_unlock_page (self);
+ }
+ 
+ 
+@@ -943,6 +954,11 @@
+   g_object_bind_property (self, "require-unlock",
+                           priv->box_unlock, "visible",
+                           G_BINDING_SYNC_CREATE);
++  /* a keypad on another screen follows the unlock box (greeters show it
++   * only once a user is picked) */
++  g_signal_connect_object (priv->box_unlock, "notify::visible",
++                           G_CALLBACK (apply_keypad_placement), self,
++                           G_CONNECT_SWAPPED);
+ 
+   plugin_settings = g_settings_new ("sm.puri.phosh.plugins");
+   plugins = g_settings_get_strv (plugin_settings, "lock-screen");
+@@ -981,6 +997,16 @@
+   PhoshLockscreen *self = PHOSH_LOCKSCREEN (object);
+   PhoshLockscreenPrivate *priv = phosh_lockscreen_get_instance_private (self);
+ 
++  /* The keypad may be on another screen: bring it back before the entry
++   * it types into goes away, and stop following that screen */
++  if (priv->keypad_container) {
++    g_signal_handlers_disconnect_by_func (priv->keypad_container,
++                                          on_keypad_container_destroy, self);
++    priv->keypad_container = NULL;
++  }
++  if (priv->keypad_external)
++    apply_keypad_placement (self);
++
+   g_clear_object (&priv->notification_settings);
+   g_clear_handle_id (&priv->idle_timer, g_source_remove);
+   g_clear_object (&priv->calls_manager);
+@@ -1383,6 +1409,88 @@
+  * extra page is added, it can be navigated to by swiping and also via calls to
+  * [method@Lockscreen.set_default_page].
+  */
++/* Put the keypad and the unlock button where they belong now: in the
++ * requested container while the unlock box is shown, on the lockscreen
++ * otherwise (greeters hide the unlock box until a user is picked). */
++static void
++apply_keypad_placement (PhoshLockscreen *self)
++{
++  PhoshLockscreenPrivate *priv = phosh_lockscreen_get_instance_private (self);
++  GtkWidget *container = NULL, *submit_box, *keypad_target, *submit_target;
++
++  if (priv->keypad_container && gtk_widget_get_visible (priv->box_unlock))
++    container = priv->keypad_container;
++
++  keypad_target = container ?: priv->keypad_revealer;
++  submit_target = container ?: priv->box_unlock;
++  if (gtk_widget_get_parent (priv->keypad) == keypad_target)
++    return;
++
++  g_debug ("Keypad moves to %s", container ? "another screen" : "the lockscreen");
++  submit_box = gtk_widget_get_parent (priv->btn_submit);
++
++  g_object_ref (priv->keypad);
++  g_object_ref (submit_box);
++  gtk_container_remove (GTK_CONTAINER (gtk_widget_get_parent (priv->keypad)), priv->keypad);
++  gtk_container_remove (GTK_CONTAINER (gtk_widget_get_parent (submit_box)), submit_box);
++  /* keypad first, unlock button below it, as on the lockscreen */
++  gtk_container_add (GTK_CONTAINER (keypad_target), priv->keypad);
++  gtk_container_add (GTK_CONTAINER (submit_target), submit_box);
++  g_object_unref (submit_box);
++  g_object_unref (priv->keypad);
++
++  priv->keypad_external = container != NULL;
++  gtk_widget_set_visible (priv->keypad_revealer, !priv->keypad_external);
++}
++
++
++static void
++on_keypad_container_destroy (PhoshLockscreen *self)
++{
++  PhoshLockscreenPrivate *priv = phosh_lockscreen_get_instance_private (self);
++
++  /* The other screen went away (output disabled, layer surface closed):
++   * take the keypad back before its container destroys it */
++  priv->keypad_container = NULL;
++  apply_keypad_placement (self);
++}
++
++
++/**
++ * phosh_lockscreen_set_keypad_container:
++ * @self: The lockscreen
++ * @container: (nullable): Where to show the keypad and the unlock button, or
++ *   %NULL to keep them on the lockscreen
++ *
++ * Devices with a second screen below a main screen turned to landscape
++ * (LG Wing in its T position) have no room for the keypad on the lock
++ * screen. Show the keypad and the unlock button on the other screen
++ * instead, whenever the unlock box is shown; the keypad keeps typing into
++ * the PIN entry of the lockscreen.
++ */
++void
++phosh_lockscreen_set_keypad_container (PhoshLockscreen *self, GtkContainer *container)
++{
++  PhoshLockscreenPrivate *priv;
++
++  g_return_if_fail (PHOSH_IS_LOCKSCREEN (self));
++  g_return_if_fail (container == NULL || GTK_IS_CONTAINER (container));
++  priv = phosh_lockscreen_get_instance_private (self);
++
++  if (priv->keypad_container != GTK_WIDGET (container)) {
++    if (priv->keypad_container)
++      g_signal_handlers_disconnect_by_func (priv->keypad_container,
++                                            on_keypad_container_destroy, self);
++    priv->keypad_container = GTK_WIDGET (container);
++    if (container)
++      g_signal_connect_object (container, "destroy",
++                               G_CALLBACK (on_keypad_container_destroy), self,
++                               G_CONNECT_SWAPPED);
++  }
++  apply_keypad_placement (self);
++}
++
++
+ void
+ phosh_lockscreen_add_extra_page (PhoshLockscreen *self, GtkWidget *widget)
+ {
+--- a/src/lockshield.h	2026-11-16 03:22:13.007791486 +0400
++++ b/src/lockshield.h	2026-11-16 03:22:13.027035155 +0400
+@@ -15,3 +15,4 @@
+ 
+ GtkWidget *phosh_lockshield_new (struct zwlr_layer_shell_v1 *layer_shell,
+                                  PhoshMonitor               *monitor);
++GtkContainer *phosh_lockshield_get_keypad_box (PhoshLockshield *self);
+--- a/src/lockshield.c	2026-11-16 03:22:13.005071981 +0400
++++ b/src/lockshield.c	2026-11-16 03:22:13.027144568 +0400
+@@ -23,6 +23,8 @@
+ struct _PhoshLockshield
+ {
+   PhoshLayerSurface parent;
++
++  GtkWidget        *keypad_box;  /* the lockscreen keypad may move here */
+ };
+ 
+ G_DEFINE_TYPE(PhoshLockshield, phosh_lockshield, PHOSH_TYPE_LAYER_SURFACE)
+@@ -53,6 +55,27 @@
+ static void
+ phosh_lockshield_init (PhoshLockshield *self)
+ {
++  self->keypad_box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 12);
++  gtk_widget_set_halign (self->keypad_box, GTK_ALIGN_CENTER);
++  gtk_widget_set_valign (self->keypad_box, GTK_ALIGN_CENTER);
++  gtk_widget_set_visible (self->keypad_box, TRUE);
++  gtk_container_add (GTK_CONTAINER (self), self->keypad_box);
++}
++
++
++/**
++ * phosh_lockshield_get_keypad_box:
++ * @self: The lock shield
++ *
++ * Returns: (transfer none): The container the lockscreen keypad can be
++ *   moved to when the main screen has no room for it
++ */
++GtkContainer *
++phosh_lockshield_get_keypad_box (PhoshLockshield *self)
++{
++  g_return_val_if_fail (PHOSH_IS_LOCKSHIELD (self), NULL);
++
++  return GTK_CONTAINER (self->keypad_box);
+ }
+ 
+ 
+--- a/src/lockscreen-manager.c	2026-11-16 03:22:13.010446804 +0400
++++ b/src/lockscreen-manager.c	2026-11-16 03:22:13.027460836 +0400
+@@ -14,6 +14,7 @@
+ #include "lockscreen-manager-priv.h"
+ #include "lockscreen-priv.h"
+ #include "lockshield.h"
++#include "layersurface-priv.h"
+ #include "monitor-manager.h"
+ #include "monitor/monitor.h"
+ #include "phosh-wayland.h"
+@@ -68,6 +69,7 @@
+ 
+   gboolean                 locked;
+   gboolean                 locking;
++  gboolean                 shields_teardown; /* we destroy the shields ourselves */
+   gint64                   active_time;    /* when lock was activated (in us) */
+ 
+   PhoshCallsManager       *calls_manager;  /* Calls DBus Interface */
+@@ -207,10 +209,13 @@
+   g_signal_handlers_disconnect_by_data (monitor_manager, self);
+   g_signal_handlers_disconnect_by_data (primary_monitor, self);
+   g_signal_handlers_disconnect_by_data (shell, self);
++  phosh_lockscreen_set_keypad_container (self->lockscreen, NULL);
+   g_clear_pointer (&self->lockscreen, phosh_cp_widget_destroy);
+ 
+   /* Unlock all other outputs */
++  self->shields_teardown = TRUE;
+   g_clear_pointer (&self->shields, g_ptr_array_unref);
++  self->shields_teardown = FALSE;
+ 
+   self->locked = FALSE;
+   self->active_time = 0;
+@@ -218,6 +223,95 @@
+ }
+ 
+ 
++/*
++ * A main screen turned to landscape has no room for the lockscreen keypad.
++ * If another built-in screen shows a shield (LG Wing in its T position, the
++ * swivel screen below the main one), show the keypad there.
++ */
++static gboolean
++monitor_is_current (PhoshMonitor *monitor)
++{
++  PhoshShell *shell = phosh_shell_get_default ();
++  PhoshMonitorManager *mm = phosh_shell_get_monitor_manager (shell);
++
++  for (guint i = 0; i < phosh_monitor_manager_get_num_monitors (mm); i++) {
++    if (phosh_monitor_manager_get_monitor (mm, i) == monitor)
++      return TRUE;
++  }
++  return FALSE;
++}
++
++
++/* Drop shields of monitors that are gone: an output switched off and on
++ * quickly may leave one behind that never got a monitor-removed */
++static void
++prune_stale_shields (PhoshLockscreenManager *self)
++{
++  if (!self->shields)
++    return;
++
++  for (gint i = (gint) self->shields->len - 1; i >= 0; i--) {
++    GtkWidget *shield = g_ptr_array_index (self->shields, i);
++    PhoshMonitor *monitor = g_object_get_data (G_OBJECT (shield), "phosh-monitor");
++
++    if (PHOSH_IS_MONITOR (monitor) && monitor_is_current (monitor))
++      continue;
++
++    g_debug ("Removing stale shield %p", shield);
++    if (self->lockscreen)
++      phosh_lockscreen_set_keypad_container (self->lockscreen, NULL);
++    self->shields_teardown = TRUE;
++    g_ptr_array_remove_index (self->shields, i);
++    self->shields_teardown = FALSE;
++  }
++}
++
++
++static void
++update_keypad_placement (PhoshLockscreenManager *self)
++{
++  PhoshLayerSurface *surface;
++  PhoshLockshield *target = NULL;
++  int width, height;
++
++  if (!self->lockscreen)
++    return;
++
++  prune_stale_shields (self);
++
++  /* Judge by the lockscreen's own size: monitors only report their
++   * transform once, the lockscreen gets reconfigured when the screen turns */
++  surface = PHOSH_LAYER_SURFACE (self->lockscreen);
++  width = phosh_layer_surface_get_configured_width (surface);
++  height = phosh_layer_surface_get_configured_height (surface);
++
++  if (self->shields && width > height) {
++    for (guint i = 0; i < self->shields->len; i++) {
++      PhoshLockshield *shield = g_ptr_array_index (self->shields, i);
++      PhoshMonitor *monitor = g_object_get_data (G_OBJECT (shield), "phosh-monitor");
++
++      if (gtk_widget_in_destruction (GTK_WIDGET (shield)) || !PHOSH_IS_MONITOR (monitor))
++        continue;
++
++      g_debug ("keypad: lockscreen %dx%d, shield %p on %s (conn %d, mapped %d)",
++               width, height, shield, monitor->name ?: "?", monitor->conn_type,
++               gtk_widget_get_mapped (GTK_WIDGET (shield)));
++
++      /* A freshly added monitor may not know its connector yet (the name
++       * comes later): only skip screens known to be external */
++      if (monitor->conn_type == PHOSH_MONITOR_CONNECTOR_TYPE_Unknown ||
++          phosh_monitor_is_builtin (monitor)) {
++        target = shield;
++        break;
++      }
++    }
++  }
++
++  phosh_lockscreen_set_keypad_container (self->lockscreen,
++                                         target ? phosh_lockshield_get_keypad_box (target) : NULL);
++}
++
++
+ static void
+ on_lockscreen_wakeup_output (PhoshLockscreenManager *self, PhoshLockscreen *lockscreen)
+ {
+@@ -229,6 +323,21 @@
+ }
+ 
+ 
++static void
++on_shield_destroyed (PhoshLockscreenManager *self, GtkWidget *shield)
++{
++  guint index;
++
++  if (self->shields_teardown || !self->shields)
++    return;
++
++  if (g_ptr_array_find (self->shields, shield, &index)) {
++    g_debug ("Shield %p closed by the compositor", shield);
++    g_ptr_array_steal_index (self->shields, index);
++  }
++}
++
++
+ /* Lock a non primary monitor bringing up a shield */
+ static void
+ lock_monitor (PhoshLockscreenManager *self,
+@@ -242,12 +351,33 @@
+   if (phosh_shell_get_primary_monitor (shell) == monitor)
+     return;
+ 
++  /* One shield per monitor: a second one would cover the first (and the
++   * keypad that may be in it) */
++  for (guint i = 0; i < self->shields->len; i++) {
++    GtkWidget *other = g_ptr_array_index (self->shields, i);
++
++    if (g_object_get_data (G_OBJECT (other), "phosh-monitor") == monitor &&
++        !gtk_widget_in_destruction (other)) {
++      g_debug ("Monitor %p already has shield %p", monitor, other);
++      return;
++    }
++  }
++
+   g_debug ("Adding shield for %s", monitor->name);
+   shield = phosh_lockshield_new (phosh_wayland_get_zwlr_layer_shell_v1 (wl), monitor);
+ 
+-  g_object_set_data (G_OBJECT (shield), "phosh-monitor", monitor);
++  /* Keep the monitor alive as long as its shield: an output switched off
++   * and on quickly (LG Wing swivel) can drop the monitor before its shield
++   * is removed, leaving a dangling pointer here */
++  g_object_set_data_full (G_OBJECT (shield), "phosh-monitor", g_object_ref (monitor),
++                          g_object_unref);
+ 
+   g_ptr_array_add (self->shields, shield);
++  g_signal_connect_object (shield, "destroy", G_CALLBACK (on_shield_destroyed), self,
++                           G_CONNECT_SWAPPED);
++  /* re-check once the shield is on its output and that output fully known */
++  g_signal_connect_object (shield, "configured", G_CALLBACK (update_keypad_placement), self,
++                           G_CONNECT_SWAPPED);
+   gtk_widget_set_visible (shield, TRUE);
+ }
+ 
+@@ -269,10 +399,15 @@
+     g_return_if_fail (PHOSH_IS_MONITOR (shield_monitor));
+     if (shield_monitor == monitor) {
+       g_debug ("Removing shield %p", shield);
++      if (self->lockscreen)
++        phosh_lockscreen_set_keypad_container (self->lockscreen, NULL);
++      self->shields_teardown = TRUE;
+       g_ptr_array_remove (self->shields, shield);
++      self->shields_teardown = FALSE;
+       break;
+     }
+   }
++  update_keypad_placement (self);
+ }
+ 
+ 
+@@ -301,6 +436,7 @@
+ 
+   g_debug ("Monitor '%s' added", monitor->name);
+   lock_monitor (self, monitor);
++  update_keypad_placement (self);
+ }
+ 
+ 
+@@ -316,6 +452,9 @@
+   primary_monitor = phosh_shell_get_primary_monitor (shell);
+   g_assert (PHOSH_IS_MONITOR (primary_monitor));
+ 
++  if (self->lockscreen)
++    phosh_lockscreen_set_keypad_container (self->lockscreen, NULL);
++
+   /* The primary output gets the clock, keypad, ... */
+   self->lockscreen = PHOSH_LOCKSCREEN (phosh_lockscreen_new (
+                                          lockscreen_type,
+@@ -330,6 +469,13 @@
+ 
+   gtk_widget_set_visible (GTK_WIDGET (self->lockscreen), TRUE);
+   /* Old lockscreen gets remove due to `layer_surface_closed` */
++
++  /* The main screen may turn while locked (swivel opened): the lockscreen
++   * gets a new size then */
++  g_signal_connect_object (self->lockscreen, "configured",
++                           G_CALLBACK (update_keypad_placement), self,
++                           G_CONNECT_SWAPPED);
++  update_keypad_placement (self);
+ }
+ 
+ 
+@@ -403,6 +549,7 @@
+       continue;
+     lock_monitor (self, monitor);
+   }
++  update_keypad_placement (self);
+ 
+   self->locked = TRUE;
+   self->locking = FALSE;

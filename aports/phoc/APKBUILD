@@ -1,0 +1,130 @@
+# Contributor: Bart Ribbers <bribbers@disroot.org>
+# Contributor: Danct12 <danct12@disroot.org>
+# Contributor: Clayton Craft <clayton@craftyguy.net>
+# Contributor: Rasmus Thomsen <oss@cogitri.dev>
+maintainer="team/phosh <newbie13xd@gmail.com>"
+pkgname=phoc
+pkgver=0.58.0
+# winglm fork of Alpine community/phoc: touch output mapping (0001),
+# MSM command mode refresh rate (0002), glFinish without sync timeline (0003),
+# no output for the SDE writeback connector (0004), OSK above the lock
+# screen on every output (0005), phosh-private v9 move toplevel to output (0006)
+pkgrel=13
+pkgdesc="wlroots based Phone compositor for the Phosh shell"
+arch="all"
+url="https://gitlab.gnome.org/World/Phosh/phoc"
+license="GPL-3.0-only"
+depends="
+	$pkgname-schemas
+	dbus
+	gsettings-desktop-schemas
+	mutter-schemas
+	"
+_wlrootsmakedepends="
+	eudev-dev
+	glslang
+	hwdata-dev
+	libcap-dev
+	libdisplay-info-dev
+	libseat-dev
+	libxcb-dev
+	xcb-util-image-dev
+	xcb-util-renderutil-dev
+	xcb-util-wm-dev
+	xkeyboard-config-dev
+	xwayland-dev
+	"
+makedepends="
+	glib-dev
+	gmobile-dev
+	gnome-desktop-dev
+	json-glib-dev
+	libdrm-dev
+	libinput-dev
+	libxkbcommon-dev
+	mesa-dev
+	meson
+	pixman-dev
+	py3-docutils
+	wayland-dev
+	wayland-protocols
+	$_wlrootsmakedepends
+	"
+checkdepends="xvfb-run"
+subpackages="
+	$pkgname-dbg
+	$pkgname-doc
+	$pkgname-lang
+	$pkgname-schemas::noarch
+	"
+options="!check" # Needs fullblown EGL
+source="https://sources.phosh.mobi/releases/phoc/phoc-${pkgver/_/.}.tar.xz
+	0001-seat-map-touch-by-libinput-output-name.patch
+	0002-wlroots-drm-msm-cmd-mode-refresh-from-vrefresh.patch
+	0003-wlroots-gles2-glFinish-without-timeline.patch
+	0004-wlroots-drm-skip-msm-writeback-connector.patch
+	0005-input-method-relay-raise-osk-on-every-output.patch
+	0006-phosh-private-move-toplevel-to-output.patch
+	"
+replaces="wlroots-phosh"
+builddir="$srcdir/$pkgname-${pkgver/_/.}"
+
+prepare() {
+	default_prepare
+
+	# keep in sync with diff_files in subprojects/wlroots.wrap
+	local p
+	for p in \
+		text-input-v2/0001-text-input-v3-Introduce-version.patch \
+		text-input-v2/0002-text-input-Add-version-2-events.patch \
+		text-input-v2/0003-text-input-v3-Add-version-2-requests.patch \
+		text-input-v2/0004-text-input-v3-Bump-protocol-version-to-2.patch \
+		0001-Revert-layer-shell-error-on-0-dimension-without-anch.patch
+	do
+		patch -Np1 < subprojects/packagefiles/wlroots/$p \
+			-d subprojects/wlroots-0.20.x
+	done
+}
+
+build() {
+	abuild-meson \
+		-Db_lto=false \
+		-Dembed-wlroots=enabled \
+		-Dman=true \
+		-Dtests="$(want_check && echo true || echo false)" \
+		--default-library=static \
+		. output
+	meson compile -C output
+}
+
+check() {
+	xvfb-run -a meson test --print-errorlogs -C output
+}
+
+package() {
+	DESTDIR="$pkgdir/" meson install --no-rebuild -C output
+	install -Dm755 tools/scale-to-fit \
+		-t "$pkgdir"/usr/bin
+
+	# remove unneeded wlroots dev. files
+	rm -r "$pkgdir"/usr/include
+	rm -r "$pkgdir"/usr/lib/libwlroots-*.a
+	rm -r "$pkgdir"/usr/lib/pkgconfig
+}
+
+schemas() {
+	pkgdesc="$pkgdesc (schemas)"
+	depends=
+
+	amove usr/share/glib-2.0/schemas
+}
+
+sha512sums="
+8abdf88f5e00c86ce3da54b24ff691cfe1a5cc7cb55bf725714d269473d4374815dfb857028abf0a0ecab6a33ca5c350598ae872eb1f220071493f743fa15dcc  phoc-0.58.0.tar.xz
+f55eaac9cbe3ed61f98b1a5fb1d486dc887abebcda3915d233603e73161d9578f8bbe4347ab19a9e9ddb41e89ae1a3cf9130f10edf2c63b77be938f5308487d8  0001-seat-map-touch-by-libinput-output-name.patch
+3a5e744b8819a0fd35f2320cfa50b0e782d399a9ff55f72b60d46a1b45f4645ffe9dcc95a985be86f03eb648af716e5f276f5a05a437f49aa137831ff5645029  0002-wlroots-drm-msm-cmd-mode-refresh-from-vrefresh.patch
+bcf4538c0974a1113242b1d5e747de2c5178f537e86e929acd046858e086c1cd982500e7eb4b6f69c50f7dfbe84986dd5f368ffb70f6088c3883b276f661d166  0003-wlroots-gles2-glFinish-without-timeline.patch
+6e8744de48de82a087ff2828f3053c8e608ad3326cdc75e3c67a81a720b26362c49bf8bc7214c081cc4ef6505a08f0f405091bad1dabf760da78ba4154d9b282  0004-wlroots-drm-skip-msm-writeback-connector.patch
+57a2c3d6eee54c92cb2d9cef5b148d05601a39e75aafd6e7ee85c8733fbcf2e2aa8032f716c0cad915722f208b28c7550cb8dfb3ee7a9338787f4864613d023f  0005-input-method-relay-raise-osk-on-every-output.patch
+1d94b8cc971041d399e0f9773d8d14e4ff053e0071b327f003a08dbc5fb699fea01f24a6d87a0890d733968a71ef79361c519a7a845e6e88bb937c787c2fef26  0006-phosh-private-move-toplevel-to-output.patch
+"

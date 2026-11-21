@@ -1,0 +1,295 @@
+# Reference: <https://postmarketos.org/devicepkg>
+pkgname=device-lg-winglm
+pkgdesc="LG Wing"
+pkgver=1
+pkgrel=31
+url="https://postmarketos.org"
+license="MIT"
+arch="aarch64"
+options="!check !archcheck"
+depends="
+	linux-lg-winglm
+	mkbootimg
+	msm-firmware-loader
+	postmarketos-base
+	soc-qcom
+	wlr-randr
+"
+makedepends="devicepkg-dev"
+install="$pkgname.post-install $pkgname.post-upgrade $pkgname-dsp.post-install $pkgname-dsp.post-upgrade
+	$pkgname-volte.post-install $pkgname-volte.post-upgrade"
+subpackages="
+	$pkgname-small-only:small_only
+	$pkgname-phosh:phosh_helpers:noarch
+	$pkgname-dsp:dsp:noarch
+	$pkgname-volte:volte:noarch
+	"
+source="
+	deviceinfo
+	kernel-cmdline.conf
+	90-winglm-gpu.rules
+	90-winglm-touch.rules
+	90-winglm-small-only.conf
+	50-winglm-logind.conf
+	50-winglm-sleep.conf
+	50-winglm-usb0.conf
+	polkit.confd
+	winglm-panel-recovery
+	winglm-panel-recovery.initd
+	winglm-brightness
+	winglm-brightness-daemon.desktop
+	org.postmarketos.WinglmBrightness.desktop
+	org.postmarketos.winglm.brightness.gschema.xml
+	winglm-swivel
+	winglm-swivel.desktop
+	org.postmarketos.winglm.swivel.gschema.xml
+	90_winglm-phosh.gschema.override
+	90-winglm-modem.rules
+	91-winglm-pulse.rules
+	winglm-dsp-setup
+	winglm-wlfw-bdf
+	winglm-adsp.initd
+	winglm-rmtfs.initd
+	winglm-modem.initd
+	winglm-wlan.initd
+	winglm-bt
+	winglm-bt.initd
+	winglm-vss
+	winglm-vss.initd
+	ucm2/lito-mtp-snd-card.conf
+	ucm2/HiFi.conf
+	ucm2/VoiceCall.conf
+	q6voiced.conf
+	50-winglm-routes.nm-dispatcher
+	volte/qmiqrtr.py
+	volte/ipadata.py
+	volte/uimtool.py
+	volte/sipmsg.py
+	volte/sdp.py
+	volte/media.py
+	volte/mmpf.py
+	volte/modemmedia.py
+	volte/imsreg2.py
+	volte/volted.py
+	winglm-volte.initd
+	winglm-volte-calls
+	winglm-volte-calls.desktop
+"
+
+build() {
+	devicepkg_build $startdir $pkgname
+}
+
+package() {
+	devicepkg_package $startdir $pkgname
+
+	# GPU (KGSL) and ION access for the video group
+	install -Dm644 "$srcdir"/90-winglm-gpu.rules \
+		"$pkgdir"/usr/lib/udev/rules.d/90-winglm-gpu.rules
+
+	# each touchscreen belongs to its own panel
+	install -Dm644 "$srcdir"/90-winglm-touch.rules \
+		"$pkgdir"/usr/lib/udev/rules.d/90-winglm-touch.rules
+
+	# power key must not shut down; no suspend on this kernel yet
+	install -Dm644 "$srcdir"/50-winglm-logind.conf \
+		"$pkgdir"/etc/elogind/logind.conf.d/50-winglm.conf
+	install -Dm644 "$srcdir"/50-winglm-sleep.conf \
+		"$pkgdir"/etc/elogind/sleep.conf.d/50-winglm.conf
+
+	# polkitd as its own user (pidfd lookups), started before NM/MM
+	install -Dm644 "$srcdir"/polkit.confd "$pkgdir"/etc/conf.d/polkit
+
+	# this kernel rejects the 0.0.0.0 gateway NetworkManager puts on prefix
+	# routes: add the Wi-Fi prefix and default routes with iproute2
+	install -Dm755 "$srcdir"/50-winglm-routes.nm-dispatcher \
+		"$pkgdir"/etc/NetworkManager/dispatcher.d/50-winglm-routes
+
+	# keep NetworkManager away from the USB network interface
+	install -Dm644 "$srcdir"/50-winglm-usb0.conf \
+		"$pkgdir"/etc/NetworkManager/conf.d/50-winglm-usb0.conf
+
+	# recover DSI panels after an SDE frame timeout ("panel dead")
+	install -Dm755 "$srcdir"/winglm-panel-recovery \
+		"$pkgdir"/usr/bin/winglm-panel-recovery
+	install -Dm755 "$srcdir"/winglm-panel-recovery.initd \
+		"$pkgdir"/etc/init.d/winglm-panel-recovery
+}
+
+phosh_helpers() {
+	pkgdesc="LG Wing: Phosh session helpers (screens follow the swivel, swivel screen brightness)"
+	depends="$pkgname calls py3-gobject3 gtk4.0 libadwaita libgudev wlr-randr"
+	install_if="$pkgname=$pkgver-r$pkgrel phosh"
+	replaces="$pkgname-brightness"
+
+	# screens follow the swivel: main landscape in the T position, swivel
+	# screen off while closed
+	install -Dm755 "$srcdir"/winglm-swivel \
+		"$subpkgdir"/usr/bin/winglm-swivel
+	install -Dm644 "$srcdir"/org.postmarketos.winglm.swivel.gschema.xml \
+		"$subpkgdir"/usr/share/glib-2.0/schemas/org.postmarketos.winglm.swivel.gschema.xml
+	install -Dm644 "$srcdir"/winglm-swivel.desktop \
+		"$subpkgdir"/etc/xdg/autostart/winglm-swivel.desktop
+	# the phrog greeter session reads its own autostart dir
+	install -Dm644 "$srcdir"/winglm-swivel.desktop \
+		"$subpkgdir"/etc/phrog/autostart/winglm-swivel.desktop
+	# the swivel decides the orientation: no forced portrait lock screen
+	install -Dm644 "$srcdir"/90_winglm-phosh.gschema.override \
+		"$subpkgdir"/usr/share/glib-2.0/schemas/90_winglm-phosh.gschema.override
+
+	# swivel screen brightness: follows the shell slider or has its own
+	install -Dm755 "$srcdir"/winglm-brightness \
+		"$subpkgdir"/usr/bin/winglm-brightness
+	install -Dm644 "$srcdir"/winglm-brightness-daemon.desktop \
+		"$subpkgdir"/etc/xdg/autostart/winglm-brightness-daemon.desktop
+	install -Dm644 "$srcdir"/org.postmarketos.WinglmBrightness.desktop \
+		"$subpkgdir"/usr/share/applications/org.postmarketos.WinglmBrightness.desktop
+	install -Dm644 "$srcdir"/org.postmarketos.winglm.brightness.gschema.xml \
+		"$subpkgdir"/usr/share/glib-2.0/schemas/org.postmarketos.winglm.brightness.gschema.xml
+}
+
+dsp() {
+	pkgdesc="LG Wing: audio DSP, modem, calls, Wi-Fi and Bluetooth bring-up (downstream kernel)"
+	depends="
+		$pkgname
+		bluez
+		callaudiod
+		make-dynpart-mappings
+		msm-firmware-loader
+		pd-mapper
+		python3
+		q6voiced
+		q6voiced-openrc
+		qrtr-ns
+		rmtfs
+		tqftpserv
+		"
+	install_if="$pkgname=$pkgver-r$pkgrel"
+
+	# firmware fixups, EFS file copies for rmtfs (partitions only read)
+	install -Dm755 "$srcdir"/winglm-dsp-setup \
+		"$subpkgdir"/usr/libexec/winglm-dsp-setup
+	# WLAN board data to the firmware (cnss-daemon's job on Android)
+	install -Dm755 "$srcdir"/winglm-wlfw-bdf \
+		"$subpkgdir"/usr/bin/winglm-wlfw-bdf
+	# WCN3991 Bluetooth patch/NVM over the UART, then hci_uart H4 (the
+	# vendor Bluetooth HAL's job on Android; needs linux-lg-winglm >= r5)
+	install -Dm755 "$srcdir"/winglm-bt "$subpkgdir"/usr/bin/winglm-bt
+	# LG SIM lock: VSS init request so the USIM becomes ready (an LG RIL
+	# helper's job on Android)
+	install -Dm755 "$srcdir"/winglm-vss "$subpkgdir"/usr/bin/winglm-vss
+	for s in winglm-adsp winglm-rmtfs winglm-modem winglm-wlan winglm-bt winglm-vss; do
+		install -Dm755 "$srcdir"/$s.initd "$subpkgdir"/etc/init.d/$s
+	done
+	# modem data port for ModemManager, rmtfs shared memory
+	install -Dm644 "$srcdir"/90-winglm-modem.rules \
+		"$subpkgdir"/usr/lib/udev/rules.d/90-winglm-modem.rules
+	# PulseAudio: interrupt driven scheduling for the Q6 PCMs (real time
+	# playback/capture with 20-25 ms periods instead of 0.5 s)
+	install -Dm644 "$srcdir"/91-winglm-pulse.rules \
+		"$subpkgdir"/usr/lib/udev/rules.d/91-winglm-pulse.rules
+	# ALSA UCM for the sound card (routes from LG's mixer_paths.xml)
+	local ucm="$subpkgdir"/usr/share/alsa/ucm2/conf.d/lito-mtp-snd-ca
+	install -Dm644 "$srcdir"/lito-mtp-snd-card.conf "$ucm"/lito-mtp-snd-card.conf
+	install -Dm644 "$srcdir"/HiFi.conf "$ucm"/HiFi.conf
+	install -Dm644 "$srcdir"/VoiceCall.conf "$ucm"/VoiceCall.conf
+	ln -s lito-mtp-snd-card.conf "$ucm"/lito-mtp-snd-ca.conf
+	# calls: q6voiced holds the voice front end open during a call
+	install -Dm644 "$srcdir"/q6voiced.conf \
+		"$subpkgdir"/usr/share/q6voiced/q6voiced.conf
+}
+
+volte() {
+	pkgdesc="LG Wing: VoLTE (IMS client and SIP gateway for GNOME Calls)"
+	depends="
+		$pkgname-dsp
+		calls
+		glib
+		gst-plugins-bad
+		gst-plugins-base
+		gst-plugins-good
+		gst-plugins-ugly
+		iproute2
+		libsecret
+		py3-gobject3
+		py3-gst
+		python3
+		qmi-utils
+		"
+	install_if="$pkgname-dsp=$pkgver-r$pkgrel calls"
+
+	# LG's modem firmware has no IMS client; this is it: IMS PDN over the
+	# downstream IPA, ISIM AKA, IPsec, SIP registration; media in the modem
+	# (LG MMPF engine, mmpf/modemmedia) or AMR(-WB) on the AP (media)
+	local f
+	for f in qmiqrtr ipadata uimtool sipmsg sdp media mmpf modemmedia imsreg2 volted; do
+		install -Dm644 "$srcdir"/$f.py "$subpkgdir"/usr/lib/winglm-volte/$f.py
+	done
+	install -Dm755 "$srcdir"/winglm-volte.initd "$subpkgdir"/etc/init.d/winglm-volte
+	# user session: GNOME Calls account for the local gateway
+	install -Dm755 "$srcdir"/winglm-volte-calls \
+		"$subpkgdir"/usr/libexec/winglm-volte-calls
+	install -Dm644 "$srcdir"/winglm-volte-calls.desktop \
+		"$subpkgdir"/etc/xdg/autostart/winglm-volte-calls.desktop
+}
+
+small_only() {
+	pkgdesc="LG Wing: use only the small screen (boards without the main panel or the swivel)"
+	depends="$pkgname"
+	# DSI-1 forced off (needs linux-lg-winglm patch 0001), swivel pinned to
+	# "opened" so the sub touch keeps its interrupt (patch 0002)
+	install -Dm644 "$srcdir"/90-winglm-small-only.conf \
+		"$subpkgdir"/usr/lib/kernel-cmdline.d/90-winglm-small-only.conf
+}
+
+sha512sums="
+57b9431f3d9ed71511c1dc9ab6ad5423fc07eb27442820ad3ad800804def2dd0bb6a809caac513778822ef6c8848d51ba94a3ed937ce474dceba5cd363f83986  deviceinfo
+3baf5d285bf83bff479cc5931380be7a9938d26aa7717d5610131e4c5c5cc7871eaaa28a6e577fe91cd96a5424ce8c822a15ede3710dcca12481608b66b40600  kernel-cmdline.conf
+11c38db46cc4f35b52cf340793e8566255537ba8e89429c23389ec49d939fa26196962dfc95d374bc34b4d55505c5d42c420c7be9ebe5984563d230521f12c2c  90-winglm-gpu.rules
+dbe472938e5a87362f56f8929454e9a8589261a0d30f464c66f9326b1c81a6fad5d3b657ec75de981bee50d9131a0b967e3abcf8a11f2ad7e5f0b1c6e9e0cca2  90-winglm-touch.rules
+b2847e081c0fdeb4f0647d113cb0376f828d9518dcf41768e263e5c450c07c6465b1ac2b4177bde9b06a08735cd382a0cb47bc919ac6fe9f13e9e16f53b0ce82  90-winglm-small-only.conf
+a00b7f84b223f417488b72102278e107be63c8d3cca02f76674c652c02de983549eb7f5c2fdf6780004859014eac787b382db846ddc0a49ab056507f8f8d2d05  50-winglm-logind.conf
+2ef8bcc3e2c1b7e07aec5b5559fbdfa09037edfbe9265e14e107641fd8af860321e6ede140b7b3b0159f2fad706acfb6f52e66507bc1184b36b321385a1a8851  50-winglm-sleep.conf
+51bc3cb5f1706b8260f8918e98a994a2616d39ca5a9daaa91556cc8eccd5f0f02b5c216aaef531668190686a710b58a20e0eadefbdc7579ea212a7da294df93a  50-winglm-usb0.conf
+0353646af59731a04ebc295b792b70af2fbd6b7131ff736b1b71c804a4ebc1e0a7d0b7234346eae347c4ed770022e3080ed4add3eb85154f553e4e1dfc26f7a8  polkit.confd
+0a2a4699bff943b522f33b2eb40d9ea61044c9862302ff072a5d9bc20f5bfdad1b0d2b807691497477813546b44f010fa1075328cc961cc4e95a25cb0c17f3f9  winglm-panel-recovery
+47a03491e1529bf6833be4b24e76599d41a21cd8c3a16290949bda9d12e103af74bd7338018cd47f402b2ca8a016eeb5cf206a812efa26e0d4cc3fb071bb6a50  winglm-panel-recovery.initd
+5bc9b2d6ea37a167a5b73bf897e7b7e2d13768b063dbdd6bafc2624209b6560352bb7a2b150c8c2620d8f92c50d16df40eb76cf75a26253be2eadbd372ddc55f  winglm-brightness
+b8fee4701b8adaac023b6dd9969c3c18c759d0bddcb35a75817867ea7306ffa46854fdbadb2bc081736f1675ff1cbf8a5352abefbff6d5b4b270d541409fccb6  winglm-brightness-daemon.desktop
+fdf4b593b7d99ce8f04d919001def264142715d87f278b5a47a9c2126789c5070e250521fe9b88d92035217ed3099041c4249a11fe9dfb0491b7beec110b0b26  org.postmarketos.WinglmBrightness.desktop
+aac963d4785725d60d1059ceea7bc3e4621ed9a6120ee1a0aa2fcc668d9863059abfd4cacbd8599cd673f16846327a7de85a40699caf8f56c00a9b2d7792c39d  org.postmarketos.winglm.brightness.gschema.xml
+69966b65c943f69268969f250981d3411c7aa884b31ba1edac22cb9a332670544d1fe3316de6be49b8cd43fb8aa37bea3d7ee922c620a8dc8f8c18b3b249d174  winglm-swivel
+f4656e1e5182c226d3dfb6a8db12b595740e3d43d904784ce4c6b871b108eaf7823e829c8150fa3bf9ddbb470c80bbaa2132e3e98ca6c772b2d3c2a176ee08f7  winglm-swivel.desktop
+7d0ecb3ec1d4ab8d1bf0df2723e14c3bb74117720a60b4f6af8a596fdca514fb478a635511f636fdf42b01939127d84967ed005ffd584d4ac364640497b8fcc6  org.postmarketos.winglm.swivel.gschema.xml
+9c21a7923026cfa9aa50918a5800d521605d44f863b15c19e346478a98f78d8aaa3924b287771fdd0576fac86fb7413a29e72c52023ff381fb7aff7672777baa  90_winglm-phosh.gschema.override
+9cb3908ddbcc8cdf2f034f65016a87e73794cb4cad529df455a7de0b3d8c2fa4d0f9eddddb9eb7ebc20a9673d893773dc0b90414bfce9796fe218a22e5321104  90-winglm-modem.rules
+268f0992be2047f1e22ee6dcfdae6a3d76f4702a81f6173948b55f8c085150d44b4ce7b3cc655c301d7e0262a2f7c36a7600d1fd0132c804f25d109397c06977  91-winglm-pulse.rules
+2af4bb510bf2219e3bd46e502518a64dd5578eacd290e27b72991a948e919f6c6b851fa327c9ec2ae1108c0eaca00e5280ee3fce9bd6354f1b4cb771f42c6b6f  winglm-dsp-setup
+5232efc835de9afeca4302eb7fce372aa4fd8041aab7d3c1fc590ffcb57657a2618725761f39fbef629a281572651386b678f02ec6f88696c3812807ac4ed3ac  winglm-wlfw-bdf
+bb6d57276568b8307c04a7d9eba5436b93c2f9b36a34b8d382e08a56f1fc26373f74f21c55d321679f40ae284a261f5b4ef6de20a47353d95c033f87062c7eab  winglm-adsp.initd
+448265a5aa1db108a535176244eb2d227cbb2cf58db4ef0845780a2324033246c039cca2277cd01a5b69a1a31ca5e64601b75947f03ef94e1fdc26eec75ba754  winglm-rmtfs.initd
+017cb04ccb88e8127925c437e86af46e9d8c7cb93708f7fe80258ef709a40fc5a3b1301379c605212c7be513da609417b760204a636bc889347572d8165bcd96  winglm-modem.initd
+573af64e768960cb7f5b8f2c787f5c0330e40d3b3f6b32434c12428192c09eb3e2bcced27e8f19b9825f163f89421c3a664931579f5add42ecd6c573e6b5c79c  winglm-wlan.initd
+f86d5abefc28e127fc670d6f494dbf74ad3096d638b88dd0c447afbcb43c30106d7781fd428615aa33d9d83f2564daa018d026917c6b452096d669c86383b909  winglm-bt
+4e8bba07721fed5ff13acc78f972edadfdb7482e9490225ccf00fbb40199d1734d7d25879d312db1c14fa6a4ae914ddff21ed2dff4bd11660405a7546b0b2dd5  winglm-bt.initd
+75b72581a7278e9bfaeea51519de057f42ef8bedfe446e6fffa2782fff6ee7522e1795b05c87fda66d11d26b5825e071b5290b91c2ab9f08d33c97eab4aa4b86  winglm-vss
+8afc748b883d8a6ad4b33501028434201896d43631a6960f35ea9d06015df3dc524cc7c7a4d461c7cf199e3efce4d8e100bd24eb2f1fabd7798191646d8ecbce  winglm-vss.initd
+bcbcddc867814bbbb3bf22926fe75addb32b86f117ac0c84009eca880d9c12286c97ae7bfd6d7c1e3fcf77e577ef2458124b2dbb49e344756dac65b60a6ebe4f  lito-mtp-snd-card.conf
+f00bd70af66a449b4c3c65b44e3cb137b7f06679822d3969c8899c109ec90e54f1c9e8bb55275e6805874c34c07c81ea3675ddf749a926590ea3cb79fc2f97d4  HiFi.conf
+8f6f72a2ead447faad8d4af4375d443a545a06315780b80d351d226750bc5e9e3daca88b00d2350a711910a85cd6d68f0ffba1b43636d8d83d83ca0470e4f405  VoiceCall.conf
+3842badf457a7421c3de86edf50c9c7015eb82a287d564c3b6d390a78566e17817ef32685df1829597b2d2691da1aa6cc2679e045f71b5a61f46d66e5b0e35a8  q6voiced.conf
+6dcd03a9c42fbe3179cd3972518d5a5d65f837b0536a7aa24292a3d23dc0447a62a45bb61cc6421335a021962b6be731a3c21a2c70f67eda0aad4de9812d5aec  50-winglm-routes.nm-dispatcher
+9a93d22d5cad09ccabefcffc1d158204720852914b0779eb55e9539a3301029ce97559728706aa2240bf04c356ff3778d42687d37423bf16134c466972e7a30c  qmiqrtr.py
+86880db216e1d4e4acf7d9621b2a3a5d703942b1770f049fd21dbe299ed33b9384d05795827efb652110040815ce7dca6af7d1863a1bd4b41a3b0d1182cc023f  ipadata.py
+68e9b3c7e49cb5003423f0ca51429a678ecdebafa65070c6716f7917d26d424400584626d978a70f75c8e95adf50b92fedcf0d16452313ec262f633d8865bc36  uimtool.py
+962e8388cbfaf3689f81effe5d64c26058eb751270f204210218b5d76f74d8b74debd459d18d0c69ef3086591cd8d7c5f28e7c53396b07a63792a04b5bf7c711  sipmsg.py
+e5093b4fc9ee90dbc88d6afc3abd4bdf7a0d35500a1c03ac80629aa0cd964610eeefc3c25f1bd8547f77c795390a40076d9e06e56a31f7cfb8bd1f7f8bcc3e37  sdp.py
+5ec88abb2628d5a7b36a89b41073f578dc4b76363468c0593d43e204a636ae8481e3b4bbdec898312a0af16c263d076f71df4d865152bb6940d3e3c6fc1e453c  media.py
+8f5a19a82b65926a7ff39d382dd76a1aa5c0099cd54b7f068625c2b1747e3375c7fe3f49f57ecbd561f1252914e511d48d83ee79c5c665d262e601631671059b  mmpf.py
+1e7ba541067c6a93a67b03e96297a05e56718523a09ff4b0f127006dceb369f1de00179fb9d00ec313d8b3d926e7152b9ee9736d9be938b906fec2e8df149bc3  modemmedia.py
+6a0b04587ebb4efe1b3ae9a814bb0c772ef9cc0236c109a8818162c6edc343946229ab22b8f5b92eb0be2783152e87c455dc8c7d7fb6b6b864871117c3d71981  imsreg2.py
+696e18199494dc8a99232b931a9bfd2eb7c56629cf7b596082c881a1f9747a480bdf858dfeb63b7e014e91e4f66d5f1370b6d4a0c7ed324ec34d8fcc988d8c1a  volted.py
+963a923d4064156e83c94328a50394f63faa843c6a57cff0f205b54e05604bd62ed058ce7d5b6f02144fa82f6f7e43c64d44694308ddff5fd1b1ed295ea614e2  winglm-volte.initd
+1968d81b178902d4739bbaab0a2f465ea074bc87490a21e7848b4ba6e2178d7294cad16171fe8fec701b80184915daa0b8ba61ec136e4300e418b75ea1d51762  winglm-volte-calls
+e63a70cb896ca984da1b7bb0b2df77291a09b1b5a5b41702faa61a66c2173a77b75dd5714c7310ba137df70321e70dc3e386aad3e1af217a3846b273250595f7  winglm-volte-calls.desktop
+"

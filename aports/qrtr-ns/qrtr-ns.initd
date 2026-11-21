@@ -1,0 +1,13 @@
+#!/sbin/openrc-run
+
+description="Qualcomm IPC router name service"
+
+command=/usr/bin/qrtr-ns
+# foreground for openrc, log to syslog, local node 1 (application processor)
+command_args="-f -s 1"
+command_background=true
+pidfile="/run/${RC_SVCNAME}.pid"
+
+depend() {
+	before pd-mapper rmtfs tqftpserv
+}

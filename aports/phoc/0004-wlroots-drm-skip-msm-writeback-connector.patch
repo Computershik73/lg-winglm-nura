@@ -1,0 +1,43 @@
+From: winglm port
+Subject: [PATCH] wlroots: drm: skip the SDE writeback connector
+
+Downstream msm_drm exposes its writeback block as an always connected
+Virtual connector. It showed up as a bogus Virtual-1 monitor in the
+display settings. Forcing it off on the kernel command line
+(video=Virtual-1:d) breaks msm_drm probing instead.
+---
+--- a/subprojects/wlroots-0.20.x/backend/drm/drm.c	2026-11-16 01:21:05.327751083 +0400
++++ b/subprojects/wlroots-0.20.x/backend/drm/drm.c	2026-11-16 01:21:05.375882459 +0400
+@@ -1772,6 +1772,20 @@
+ 
+ static void disconnect_drm_connector(struct wlr_drm_connector *conn);
+ 
++/* Qualcomm SDE (downstream msm_drm) exposes its writeback block as a
++ * "Virtual" connector that always reports connected. It is not a display:
++ * creating an output for it only adds a bogus monitor to the settings. */
++static bool is_msm_writeback(struct wlr_drm_backend *drm,
++		const drmModeConnector *conn) {
++	if (conn->connector_type != DRM_MODE_CONNECTOR_VIRTUAL) {
++		return false;
++	}
++	drmVersion *version = drmGetVersion(drm->fd);
++	bool msm = version != NULL && strcmp(version->name, "msm_drm") == 0;
++	drmFreeVersion(version);
++	return msm;
++}
++
+ void scan_drm_connectors(struct wlr_drm_backend *drm,
+ 		struct wlr_device_hotplug_event *event) {
+ 	if (event != NULL && event->connector_id != 0) {
+@@ -1828,6 +1842,11 @@
+ 			continue;
+ 		}
+ 
++		if (!wlr_conn && is_msm_writeback(drm, drm_conn)) {
++			drmModeFreeConnector(drm_conn);
++			continue;
++		}
++
+ 		if (!wlr_conn) {
+ 			wlr_conn = create_drm_connector(drm, drm_conn);
+ 			if (wlr_conn == NULL) {

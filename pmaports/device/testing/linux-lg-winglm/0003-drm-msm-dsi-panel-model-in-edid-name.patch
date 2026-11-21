@@ -1,0 +1,48 @@
+From: winglm port
+Subject: [PATCH] drm/msm/dsi: put the panel model in the EDID product name
+
+Every DSI connector gets the same fake EDID (QCM, product 0x0001, serial 1)
+and the panel name went into an unspecified-text descriptor (0xFE).
+Compositors then see two identical monitors, and phoc mixes up the
+outputs (layer surfaces land on the wrong one).
+
+Write the panel model (first word of the panel name) into the display
+product name descriptor (0xFC) instead.
+---
+--- a/techpack/display/msm/dsi/dsi_drm.c	2026-11-15 23:13:31.345412729 +0400
++++ b/techpack/display/msm/dsi/dsi_drm.c	2026-11-15 23:13:31.348991375 +0400
+@@ -747,9 +747,17 @@
+ static int dsi_drm_update_edid_name(struct edid *edid, const char *name)
+ {
+ 	u8 *dtd = (u8 *)&edid->detailed_timings[3];
+-	u8 standard_header[] = {0x00, 0x00, 0x00, 0xFE, 0x00};
++	/*
++	 * Display product name (0xFC) rather than unspecified text (0xFE):
++	 * every DSI panel shares the same vendor, product and serial in this
++	 * EDID, so the name is the only thing that tells compositors apart.
++	 * Use the panel model (the first word of the name), terminated with
++	 * 0x0A and padded with spaces as the EDID spec asks.
++	 */
++	u8 standard_header[] = {0x00, 0x00, 0x00, 0xFC, 0x00};
+ 	u32 dtd_size = 18;
+ 	u32 header_size = sizeof(standard_header);
++	u32 len;
+ 
+ 	if (!name)
+ 		return -EINVAL;
+@@ -758,9 +766,13 @@
+ 	memcpy(dtd, standard_header, header_size);
+ 
+ 	dtd_size -= header_size;
+-	dtd_size = min_t(u32, dtd_size, strlen(name));
++	len = strcspn(name, " ");
++	len = min_t(u32, dtd_size, len);
+ 
+-	memcpy(dtd + header_size, name, dtd_size);
++	memset(dtd + header_size, 0x20, dtd_size);
++	memcpy(dtd + header_size, name, len);
++	if (len < dtd_size)
++		dtd[header_size + len] = 0x0A;
+ 
+ 	return 0;
+ }

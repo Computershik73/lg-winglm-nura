@@ -1,0 +1,471 @@
+From: winglm port
+Subject: [PATCH] Allow putting the keyboard on a given output
+
+New setting mobi.phosh.osk output: the connector name of the output the
+keyboard should be shown on (LG Wing: the swivel screen below the main
+one in its T position). The input surface is recreated when the setting
+changes or that output comes or goes, and the keyboard gets sized for it.
+
+Also recreate the input surface when the compositor closes it (its output
+went away): the dangling pointer kept maybe_create_input_surface() from
+doing anything, leaving the session without a keyboard. A new input surface
+waits for the old one's input method to go (the compositor hands out one
+per seat) and the first surface's one-shot key press timer is removed when
+that surface goes away before it fires (it used a freed driver).
+---
+--- a/data/mobi.phosh.osk.gschema.xml	2026-11-16 04:29:45.825135017 +0400
++++ b/data/mobi.phosh.osk.gschema.xml	2026-11-16 04:29:45.909976466 +0400
+@@ -45,6 +45,16 @@
+       </description>
+     </key>
+ 
++    <key name="output" type='s'>
++      <default>''</default>
++      <summary>Output to show the keyboard on</summary>
++      <description>
++        Connector name of the output (e.g. DSI-2) the keyboard should be
++        shown on. If empty or no such output exists the compositor picks
++        one.
++      </description>
++    </key>
++
+     <key name="schema-migration" type='u'>
+       <default>0</default>
+       <summary>The schema migration state</summary>
+--- a/src/pos-output.h	2026-11-16 04:29:45.836507036 +0400
++++ b/src/pos-output.h	2026-11-16 04:29:45.910071969 +0400
+@@ -22,6 +22,8 @@
+ 
+ PosOutput *        pos_output_new (struct wl_output *output);
+ gboolean           pos_output_is_portrait (PosOutput *self);
++const char *       pos_output_get_name (PosOutput *self);
++struct wl_output * pos_output_get_wl_output (PosOutput *self);
+ guint              pos_output_get_logical_width (PosOutput *self);
+ guint              pos_output_get_logical_height (PosOutput *self);
+ double             pos_output_get_logical_pixel_size (PosOutput *self);
+--- a/src/pos-output.c	2026-11-16 04:29:45.846188293 +0400
++++ b/src/pos-output.c	2026-11-16 04:29:45.910153381 +0400
+@@ -323,6 +323,24 @@
+ }
+ 
+ 
++const char *
++pos_output_get_name (PosOutput *self)
++{
++  g_assert (POS_IS_OUTPUT (self));
++
++  return self->current.name;
++}
++
++
++struct wl_output *
++pos_output_get_wl_output (PosOutput *self)
++{
++  g_assert (POS_IS_OUTPUT (self));
++
++  return self->wl_output;
++}
++
++
+ guint
+ pos_output_get_logical_height (PosOutput *self)
+ {
+--- a/src/pos-size-manager.h	2026-11-16 04:29:45.856400922 +0400
++++ b/src/pos-size-manager.h	2026-11-16 04:29:45.910222632 +0400
+@@ -6,6 +6,8 @@
+ 
+ #pragma once
+ 
++#include "pos-output.h"
++
+ #include <glib-object.h>
+ 
+ G_BEGIN_DECLS
+@@ -15,5 +17,7 @@
+ G_DECLARE_FINAL_TYPE (PosSizeManager, pos_size_manager, POS, SIZE_MANAGER, GObject)
+ 
+ PosSizeManager *pos_size_manager_new (void);
++void            pos_size_manager_set_preferred_output (PosSizeManager *self,
++                                                       PosOutput      *output);
+ 
+ G_END_DECLS
+--- a/src/pos-size-manager.c	2026-11-16 04:29:45.866687044 +0400
++++ b/src/pos-size-manager.c	2026-11-16 04:29:45.910307265 +0400
+@@ -36,6 +36,7 @@
+   GObject    parent;
+ 
+   PosOutput *output;
++  PosOutput *preferred; /* weak: the output the app put the keyboard on */
+   guint      height;
+   guint      dead_zone;
+ 
+@@ -179,7 +180,7 @@
+ set_output (PosSizeManager *self, PosOutput *output)
+ {
+   if (self->output)
+-    g_signal_handlers_disconnect_by_data (self->output, self);
++    g_signal_handlers_disconnect_by_func (self->output, on_output_configured, self);
+ 
+   g_set_object (&self->output, output);
+ 
+@@ -199,6 +200,13 @@
+   PosOutput *output;
+   GPtrArray *outputs;
+ 
++  /* Size for the output the keyboard was explicitly put on */
++  if (self->preferred) {
++    set_output (self, self->preferred);
++    on_output_configured (self, self->output);
++    return;
++  }
++
+   if (pos_wayland_get_n_outputs (wayland) != 1) {
+     /* TODO: we can do better: if we didn't get a "surface enter" we can assume we're on
+        the same output */
+@@ -243,6 +251,7 @@
+   PosSizeManager *self = POS_SIZE_MANAGER (object);
+ 
+   set_output (self, NULL);
++  g_clear_weak_pointer (&self->preferred);
+   g_clear_object (&self->settings);
+ 
+   G_OBJECT_CLASS (pos_size_manager_parent_class)->dispose (object);
+@@ -304,6 +313,27 @@
+ }
+ 
+ 
++/**
++ * pos_size_manager_set_preferred_output:
++ * @self: The size manager
++ * @output: (nullable): The output the keyboard is shown on
++ *
++ * Size the keyboard for @output. With %NULL the size manager picks an
++ * output itself (if there's only one).
++ */
++void
++pos_size_manager_set_preferred_output (PosSizeManager *self, PosOutput *output)
++{
++  g_assert (POS_IS_SIZE_MANAGER (self));
++
++  if (self->preferred == output)
++    return;
++
++  g_set_weak_pointer (&self->preferred, output);
++  on_outputs_changed (self, NULL, pos_wayland_get_default ());
++}
++
++
+ PosSizeManager *
+ pos_size_manager_new (void)
+ {
+--- a/src/phosh-osk-stevia.c	2026-11-16 04:29:45.876414212 +0400
++++ b/src/phosh-osk-stevia.c	2026-11-16 04:29:45.910600592 +0400
+@@ -55,6 +55,13 @@
+   PosHwTracker        *hw_tracker;
+   PosEmojiDb          *emoji_db;
+   PosSizeManager      *size_manager;
++  GSettings           *osk_settings;
++  PosOutput           *surface_output; /* weak: output the input surface was put on */
++  int                  surface_busy;    /* creating / recreating the input surface */
++  gboolean             surface_recheck; /* output changes seen meanwhile */
++  gboolean             create_pending;  /* waiting for the outputs' names */
++  PosInputMethod      *surface_im;      /* weak: the input surface's input method */
++  gboolean             im_wait;         /* waiting for the old input method to go */
+   int exit_status;
+   guint wl_proto_timeout_id;
+ } PosApp;
+@@ -267,6 +274,139 @@
+ 
+ 
+ 
++/* The output named in the 'output' setting, if it's there */
++static PosOutput *
++find_wanted_output (PosApp *self)
++{
++  g_autofree char *name = NULL;
++  GPtrArray *outputs;
++
++  if (!self->osk_settings)
++    return NULL;
++
++  name = g_settings_get_string (self->osk_settings, "output");
++  if (!name || !*name)
++    return NULL;
++
++  outputs = pos_wayland_get_outputs (pos_wayland_get_default ());
++  for (guint i = 0; i < outputs->len; i++) {
++    PosOutput *output = g_ptr_array_index (outputs, i);
++
++    if (g_strcmp0 (pos_output_get_name (output), name) == 0)
++      return output;
++  }
++
++  return NULL;
++}
++
++
++static void maybe_create_input_surface (PosApp *self);
++
++static void
++on_deferred_create (gpointer data)
++{
++  maybe_create_input_surface (POS_APP (data));
++}
++
++
++static void
++on_old_im_gone (gpointer data, GObject *where_the_object_was)
++{
++  PosApp *self = POS_APP (data);
++
++  self->im_wait = FALSE;
++  /* Leave the finalize first */
++  g_idle_add_once (on_deferred_create, self);
++}
++
++
++/* An output is wanted but the outputs don't have their names yet */
++static gboolean
++outputs_pending (PosApp *self)
++{
++  g_autofree char *name = NULL;
++  GPtrArray *outputs;
++
++  if (!self->osk_settings)
++    return FALSE;
++
++  name = g_settings_get_string (self->osk_settings, "output");
++  if (!name || !*name)
++    return FALSE;
++
++  outputs = pos_wayland_get_outputs (pos_wayland_get_default ());
++  if (outputs->len == 0)
++    return TRUE;
++
++  for (guint i = 0; i < outputs->len; i++) {
++    if (!pos_output_get_name (g_ptr_array_index (outputs, i)))
++      return TRUE;
++  }
++
++  return FALSE;
++}
++
++/* Recreate the input surface if it's not on the wanted output */
++static void
++check_input_surface_output (PosApp *self)
++{
++  PosOutput *wanted = find_wanted_output (self);
++
++  /* Creating, mapping and destroying layer surfaces dispatches Wayland
++   * events (output 'configured' among them): check again once done */
++  if (self->surface_busy) {
++    self->surface_recheck = TRUE;
++    return;
++  }
++
++  if (!self->input_surface) {
++    if (self->create_pending && !outputs_pending (self)) {
++      self->create_pending = FALSE;
++      maybe_create_input_surface (self);
++    }
++    return;
++  }
++
++  if (wanted == self->surface_output)
++    return;
++
++  g_debug ("Moving input surface to %s",
++           wanted ? pos_output_get_name (wanted) : "the compositor's choice of output");
++  self->surface_busy++;
++  dispose_input_surface (self);
++  self->input_surface = NULL;
++  maybe_create_input_surface (self);
++  self->surface_busy--;
++
++  if (!self->surface_busy && self->surface_recheck) {
++    self->surface_recheck = FALSE;
++    check_input_surface_output (self);
++  }
++}
++
++
++static void
++on_outputs_changed (PosApp *self, GParamSpec *pspec, PosWayland *wayland)
++{
++  GPtrArray *outputs = pos_wayland_get_outputs (wayland);
++
++  /* Output names arrive with the first 'done' */
++  for (guint i = 0; i < outputs->len; i++) {
++    PosOutput *output = g_ptr_array_index (outputs, i);
++
++    if (g_object_get_data (G_OBJECT (output), "pos-app-watched"))
++      continue;
++
++    g_object_set_data (G_OBJECT (output), "pos-app-watched", GINT_TO_POINTER (TRUE));
++    g_signal_connect_object (output, "configured",
++                             G_CALLBACK (check_input_surface_output), self,
++                             G_CONNECT_SWAPPED);
++  }
++
++  check_input_surface_output (self);
++}
++
++
+ static void
+ create_input_surface (PosApp *self)
+ {
+@@ -277,6 +417,7 @@
+   g_autoptr (PosClipboardManager) clipboard_manager = NULL;
+   PosWayland *wayland = pos_wayland_get_default ();
+   gboolean force_completion;
++  PosOutput *output;
+ 
+   g_assert (POS_IS_APP (self));
+   g_assert (POS_IS_OSK_DBUS (self->osk_dbus));
+@@ -294,8 +435,17 @@
+     pos_input_method_new (pos_wayland_get_zwp_input_method_manager_v2 (wayland),
+                           pos_wayland_get_wl_seat (wayland));
+ 
++  self->surface_busy++;
++  output = find_wanted_output (self);
++  g_set_weak_pointer (&self->surface_output, output);
++  g_set_weak_pointer (&self->surface_im, im);
++  pos_size_manager_set_preferred_output (self->size_manager, output);
++  g_debug ("Creating input surface on %s",
++           output ? pos_output_get_name (output) : "the compositor's choice of output");
++
+   force_completion = !!(_debug_flags & POS_DEBUG_FLAG_FORCE_COMPLETEION);
+   self->input_surface = g_object_new (POS_TYPE_INPUT_SURFACE,
++                                      "wl-output", output ? pos_output_get_wl_output (output) : NULL,
+                                       "min-height", POS_INPUT_SURFACE_DEFAULT_HEIGHT,
+                                       /* layer-surface */
+                                       "layer-shell", pos_wayland_get_zwlr_layer_shell_v1 (wayland),
+@@ -362,6 +512,12 @@
+   gtk_window_present (GTK_WINDOW (self->input_surface));
+ 
+   g_object_weak_ref (G_OBJECT (self->input_surface), on_input_surface_gone, self);
++
++  self->surface_busy--;
++  if (!self->surface_busy && self->surface_recheck) {
++    self->surface_recheck = FALSE;
++    check_input_surface_output (self);
++  }
+ }
+ 
+ 
+@@ -381,6 +537,24 @@
+     return;
+   }
+ 
++  /* Don't create it on the wrong output only to move it right away */
++  if (outputs_pending (self)) {
++    g_debug ("Outputs not known yet, postponing input surface creation");
++    self->create_pending = TRUE;
++    return;
++  }
++
++  /* The old input surface (and with it its input method) is only finalized
++   * later and the compositor hands out one input method per seat */
++  if (self->surface_im) {
++    if (!self->im_wait) {
++      g_debug ("Waiting for the old input method to go");
++      self->im_wait = TRUE;
++      g_object_weak_ref (G_OBJECT (self->surface_im), on_old_im_gone, self);
++    }
++    return;
++  }
++
+   g_debug ("Creating new input surface");
+   create_input_surface (self);
+ }
+@@ -394,6 +568,9 @@
+   g_assert (POS_IS_APP (self));
+ 
+   g_debug ("Input surface gone, recreating");
++  /* The compositor closed it (e.g. its output went away): forget it so a
++   * new one gets created */
++  self->input_surface = NULL;
+   maybe_create_input_surface (self);
+ }
+ 
+@@ -500,6 +677,11 @@
+ 
+   g_clear_object (&self->emoji_db);
+   g_clear_object (&self->size_manager);
++  g_clear_weak_pointer (&self->surface_output);
++  if (self->surface_im && self->im_wait)
++    g_object_weak_unref (G_OBJECT (self->surface_im), on_old_im_gone, self);
++  g_clear_weak_pointer (&self->surface_im);
++  g_clear_object (&self->osk_settings);
+ 
+   G_OBJECT_CLASS (pos_app_parent_class)->finalize (object);
+ }
+@@ -530,6 +712,15 @@
+   self->session_proxy = pos_app_session_register (self, APP_ID);
+   self->size_manager = pos_size_manager_new ();
+ 
++  self->osk_settings = g_settings_new ("mobi.phosh.osk");
++  g_signal_connect_object (self->osk_settings, "changed::output",
++                           G_CALLBACK (check_input_surface_output), self,
++                           G_CONNECT_SWAPPED);
++  g_signal_connect_object (wayland, "notify::outputs",
++                           G_CALLBACK (on_outputs_changed), self,
++                           G_CONNECT_SWAPPED);
++  on_outputs_changed (self, NULL, wayland);
++
+   /* Exit if we don't find all Wayland protocols */
+   self->wl_proto_timeout_id = g_timeout_add_seconds_once (5, on_wl_proto_timeout, self);
+   g_source_set_name_by_id (self->wl_proto_timeout_id, "[pos] wl-proto timeout");
+--- a/src/pos-input-surface.c	2026-11-16 04:29:45.884750262 +0400
++++ b/src/pos-input-surface.c	2026-11-16 04:29:45.911293260 +0400
+@@ -166,6 +166,7 @@
+ 
+   /* Backspace handling */
+   guint                       bs_repeat_id;
++  guint                       delayed_init_id;
+   PosBackspaceMode            bs_mode;
+   char                       *surround_before;
+   /* layout-override */
+@@ -1573,9 +1574,12 @@
+ static void on_input_setting_changed (PosInputSurface *self, const char *key, GSettings *settings);
+ 
+ 
++static gboolean input_serial_sent;
++
+ static void
+ delayed_init (PosInputSurface *self)
+ {
++  self->delayed_init_id = 0;
+   pos_vk_driver_key_press_gdk (self->keyboard_driver, GDK_KEY_BackSpace, 0);
+ }
+ 
+@@ -1583,7 +1587,6 @@
+ static void
+ pos_input_surface_constructed (GObject *object)
+ {
+-  static gboolean input_serial_sent = FALSE;
+   PosInputSurface *self = POS_INPUT_SURFACE (object);
+   const char *test_layout = g_getenv ("POS_TEST_LAYOUT");
+ 
+@@ -1618,7 +1621,7 @@
+   /* Work around https://gitlab.gnome.org/GNOME/gtk/-/merge_requests/5628 by
+      sending at least one key press to the shell so we have a serial */
+   if (!input_serial_sent) {
+-    g_timeout_add_seconds_once (1, (GSourceOnceFunc)delayed_init, self);
++    self->delayed_init_id = g_timeout_add_seconds_once (1, (GSourceOnceFunc)delayed_init, self);
+     input_serial_sent = TRUE;
+   }
+ }
+@@ -1647,6 +1650,12 @@
+ 
+   g_clear_handle_id (&self->animation.id, g_source_remove);
+   g_clear_handle_id (&self->bs_repeat_id, g_source_remove);
++  /* Gone before the workaround's key press (e.g. moved to another output
++   * right away): don't press with a freed driver, let the next one do it */
++  if (self->delayed_init_id) {
++    g_clear_handle_id (&self->delayed_init_id, g_source_remove);
++    input_serial_sent = FALSE;
++  }
+ 
+   g_clear_object (&self->logind_session);
+   g_clear_object (&self->keyboard_driver);

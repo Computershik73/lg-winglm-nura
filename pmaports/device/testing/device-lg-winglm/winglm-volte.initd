@@ -1,0 +1,30 @@
+#!/sbin/openrc-run
+# LG Wing: VoLTE. LG's modem firmware has no IMS client (LG's Android app
+# does SIP), so winglm-volte is the IMS client: IMS PDN over IPA, ISIM AKA,
+# IPsec, registration, and a local SIP gateway that GNOME Calls uses as a
+# "Use for Phone Calls" account. IMS is only registered while Calls is
+# connected to it; otherwise calls stay on CS.
+supervisor=supervise-daemon
+name="LG Wing VoLTE"
+command=/usr/bin/python3
+command_args="-u /usr/lib/winglm-volte/volted.py"
+output_log=/var/log/winglm-volte.log
+error_log=/var/log/winglm-volte.log
+respawn_delay=10
+respawn_max=0
+
+depend() {
+	need qrtr-ns winglm-modem winglm-vss
+	after modemmanager networkmanager
+}
+
+start_pre() {
+	# keep the logs from growing without bound
+	local f
+	for f in /var/log/winglm-volte.log /var/log/winglm-volte.trace; do
+		if [ -f $f ] && [ "$(stat -c %s $f)" -gt 2000000 ]; then
+			mv $f $f.old
+		fi
+	done
+	return 0
+}

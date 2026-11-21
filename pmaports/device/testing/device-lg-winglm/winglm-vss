@@ -1,0 +1,102 @@
+#!/usr/bin/python3
+"""LG Wing: unblock the SIM card (LG "VSS" init over QMI).
+
+LG's modem firmware runs its own SIM lock ("simlock: waiting vss init"): the
+USIM application stays in the 'detected' state, never 'ready', until an AP
+client of LG's VSS common QMI service (QRTR service 800) sends the connect
+callback request (message 0x0602, TLV 0x01 = 1). On Android one of LG's RIL
+helpers does that; without it ModemManager reports "sim-missing" and the phone
+never registers.
+
+This daemon watches the QRTR name service for service 800 and sends the
+request every time the modem (re)starts, then keeps the client open and drops
+the debug indications the modem sends to VSS clients.
+"""
+import os
+import select
+import socket
+import struct
+import sys
+import time
+
+AF_QIPCRTR = 42
+QRTR_PORT_CTRL = 0xFFFFFFFE
+QRTR_TYPE_NEW_SERVER = 4
+QRTR_TYPE_DEL_SERVER = 5
+QRTR_TYPE_NEW_LOOKUP = 10
+
+VSS_SERVICE = 800
+VSS_CONNECT_CALLBACK_REQ = 0x0602
+QMI_REQUEST = 0
+QMI_RESPONSE = 2
+
+
+def log(*args):
+    print(time.strftime('%H:%M:%S'), *args, flush=True)
+
+
+def main():
+    ctrl = socket.socket(AF_QIPCRTR, socket.SOCK_DGRAM)
+    local_node = ctrl.getsockname()[0]
+    # persistent lookup: qrtr-ns reports the service now and whenever it
+    # comes or goes (modem restart)
+    ctrl.sendto(struct.pack('<IIIII', QRTR_TYPE_NEW_LOOKUP, VSS_SERVICE, 0, 0, 0)
+                + bytes(12), (local_node, QRTR_PORT_CTRL))
+    client = None
+    server = None
+    txn = 0
+    log('waiting for the VSS service (QRTR service %d)' % VSS_SERVICE)
+
+    while True:
+        socks = [ctrl] + ([client] if client else [])
+        ready, _, _ = select.select(socks, [], [])
+        if ctrl in ready:
+            pkt, _ = ctrl.recvfrom(64)
+            if len(pkt) < 20:
+                continue
+            cmd, svc, inst, node, port = struct.unpack_from('<IIIII', pkt)
+            if svc != VSS_SERVICE:
+                continue
+            if cmd == QRTR_TYPE_NEW_SERVER and (node, port) != server:
+                if client:
+                    client.close()
+                server = (node, port)
+                client = socket.socket(AF_QIPCRTR, socket.SOCK_DGRAM)
+                txn = (txn % 0xFFFF) + 1
+                tlv = struct.pack('<BHI', 0x01, 4, 1)
+                req = struct.pack('<BHHH', QMI_REQUEST, txn,
+                                  VSS_CONNECT_CALLBACK_REQ, len(tlv)) + tlv
+                client.sendto(req, server)
+                log('VSS service at %d:%d, connect callback request sent' % server)
+            elif cmd == QRTR_TYPE_DEL_SERVER and (node, port) == server:
+                log('VSS service gone (modem stopped)')
+                if client:
+                    client.close()
+                client = None
+                server = None
+        if client and client in ready:
+            try:
+                pkt, _ = client.recvfrom(65536)
+            except OSError:
+                continue
+            if len(pkt) < 7:
+                continue
+            typ, rtxn, msg, _ = struct.unpack_from('<BHHH', pkt)
+            if typ == QMI_RESPONSE and msg == VSS_CONNECT_CALLBACK_REQ:
+                # TLV 0x02: result, error
+                result = error = None
+                off = 7
+                while off + 3 <= len(pkt):
+                    t, ln = struct.unpack_from('<BH', pkt, off)
+                    if t == 0x02 and ln >= 4:
+                        result, error = struct.unpack_from('<HH', pkt, off + 3)
+                    off += 3 + ln
+                log('connect callback response: result %s error %s' % (result, error))
+            # anything else: VSS debug indications, dropped
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.exit(0)

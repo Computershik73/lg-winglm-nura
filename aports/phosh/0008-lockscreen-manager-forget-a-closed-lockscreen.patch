@@ -1,0 +1,70 @@
+From: winglm port
+Subject: [PATCH] lockscreen-manager: forget a lockscreen the compositor closed
+
+The compositor closes a lockscreen whose output is gone, and that can
+happen right after it was created: locked at session start, the screens
+get blanked one after the other (blanking disables the outputs) and the
+lockscreen moves to a primary monitor that is going away too. The
+manager kept the pointer to the destroyed widget and the keypad
+placement (0002) used it right away: the shell crashed during startup.
+Clear the pointer on destroy and let unlocking work without a
+lockscreen; a new one comes with the next primary monitor.
+---
+--- a/src/lockscreen-manager.c	2026-11-16 08:29:54.817369941 +0400
++++ b/src/lockscreen-manager.c	2026-11-16 08:29:54.835071548 +0400
+@@ -203,13 +203,16 @@
+   PhoshMonitorManager *monitor_manager = phosh_shell_get_monitor_manager (shell);
+   PhoshMonitor *primary_monitor = phosh_shell_get_primary_monitor (shell);
+ 
+-  g_return_if_fail (PHOSH_IS_LOCKSCREEN (lockscreen));
+-  g_return_if_fail (lockscreen == PHOSH_LOCKSCREEN (self->lockscreen));
++  /* NULL: the compositor closed the lockscreen (see on_lockscreen_destroyed) */
++  g_return_if_fail (lockscreen == NULL || PHOSH_IS_LOCKSCREEN (lockscreen));
++  g_return_if_fail (lockscreen == self->lockscreen);
+ 
+   g_signal_handlers_disconnect_by_data (monitor_manager, self);
+-  g_signal_handlers_disconnect_by_data (primary_monitor, self);
++  if (primary_monitor)
++    g_signal_handlers_disconnect_by_data (primary_monitor, self);
+   g_signal_handlers_disconnect_by_data (shell, self);
+-  phosh_lockscreen_set_keypad_container (self->lockscreen, NULL);
++  if (self->lockscreen)
++    phosh_lockscreen_set_keypad_container (self->lockscreen, NULL);
+   g_clear_pointer (&self->lockscreen, phosh_cp_widget_destroy);
+ 
+   /* Unlock all other outputs */
+@@ -440,6 +443,20 @@
+ }
+ 
+ 
++/* The compositor can close a lockscreen right after it was created (its
++ * output went away meanwhile, e.g. all screens blanked during startup):
++ * don't keep a pointer to the destroyed widget */
++static void
++on_lockscreen_destroyed (PhoshLockscreenManager *self, GtkWidget *lockscreen)
++{
++  if (GTK_WIDGET (self->lockscreen) != lockscreen)
++    return;
++
++  g_debug ("Lockscreen %p closed by the compositor", lockscreen);
++  self->lockscreen = NULL;
++}
++
++
+ static void
+ lock_primary_monitor (PhoshLockscreenManager *self)
+ {
+@@ -466,8 +483,13 @@
+                     "swapped-object-signal::wakeup-output", on_lockscreen_wakeup_output, self,
+                     NULL);
+   phosh_lockscreen_set_bg_image (self->lockscreen, self->cached_bg_image);
++  g_signal_connect_object (self->lockscreen, "destroy",
++                           G_CALLBACK (on_lockscreen_destroyed), self,
++                           G_CONNECT_SWAPPED);
+ 
+   gtk_widget_set_visible (GTK_WIDGET (self->lockscreen), TRUE);
++  if (!self->lockscreen)
++    return;
+   /* Old lockscreen gets remove due to `layer_surface_closed` */
+ 
+   /* The main screen may turn while locked (swivel opened): the lockscreen

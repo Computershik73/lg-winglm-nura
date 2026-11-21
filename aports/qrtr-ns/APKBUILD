@@ -1,0 +1,32 @@
+# QRTR name service daemon. Mainline kernels have it built in; downstream
+# 4.19 kernels (LG Wing) don't, and the remote processors' services (audio,
+# WLAN, modem, pd-mapper) can't find each other without it. The daemon was
+# dropped from qrtr after 1.1, so only that is packaged from 1.1.
+pkgname=qrtr-ns
+pkgver=1.1
+pkgrel=0
+pkgdesc="Qualcomm IPC router name service (for downstream kernels)"
+url="https://github.com/linux-msm/qrtr"
+arch="aarch64 armv7"
+license="BSD-3-Clause"
+makedepends="meson"
+subpackages="$pkgname-openrc"
+source="qrtr-$pkgver.tar.gz::https://github.com/linux-msm/qrtr/archive/refs/tags/v$pkgver.tar.gz
+	qrtr-ns.initd
+	"
+builddir="$srcdir/qrtr-$pkgver"
+options="!check" # no tests
+
+build() {
+	abuild-meson -Dqrtr-ns=enabled -Dsystemd-service=disabled . output
+	meson compile -C output
+}
+
+package() {
+	install -Dm755 output/src/qrtr-ns "$pkgdir"/usr/bin/qrtr-ns
+	install -Dm755 "$srcdir"/qrtr-ns.initd "$pkgdir"/etc/init.d/qrtr-ns
+}
+sha512sums="
+68cc8731d500b2e7f5702471a3c239f415bd97035678d972d40d28ceb58bcaa1ee271816fd2002776a2d370611fc9e5e54a79d1a16ce2bce258b9411d9aec824  qrtr-1.1.tar.gz
+9d570ef5dc6ca256b465958e29c4cc024548c5c2de9cd1ec433cdbf443093743c324297f4a3a95d498328e2df80fa97f562a28c2a507118f884391e4af038913  qrtr-ns.initd
+"

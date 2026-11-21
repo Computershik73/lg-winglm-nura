@@ -1,0 +1,34 @@
+# winglm fork of Alpine community/qrtr: NEW_SERVER names node and port (0001)
+pkgname=qrtr
+pkgver=1.2
+pkgrel=10
+pkgdesc="Userspace reference for net/qrtr in the Linux kernel"
+url="https://github.com/linux-msm/qrtr"
+arch="all"
+license="BSD-3-Clause"
+depends_dev="linux-headers"
+makedepends="$depends_dev meson"
+subpackages="$pkgname-doc $pkgname-dev $pkgname-libs"
+source="https://github.com/linux-msm/qrtr/archive/v$pkgver/qrtr-v$pkgver.tar.gz
+	0001-lib-name-node-and-port-in-new-server.patch
+	"
+options="!check" # no tests
+
+build() {
+	abuild-meson \
+		-Dqrtr-ns=disabled \
+		-Dsystemd-service=disabled \
+		. output
+	meson compile -C output
+}
+
+package() {
+	DESTDIR="$pkgdir" meson install --no-rebuild -C output
+
+	install -Dm644 LICENSE "$pkgdir"/usr/share/licenses/$pkgname/COPYING
+}
+
+sha512sums="
+aec1dfc598a70f0128d81a56faab74a2a7676dc0c4ff2e858f76aaf815afb5b785af0cf18427212f92aec3c61297af3f94a64671ec5e161c4a340d2edcfaabdd  qrtr-v1.2.tar.gz
+b4af8ac1e34a2c8ff47e6269cbbe2806597376b78387deef1017cd152d280cf69fb8aaffba74a6c74054cd12b0ce10a93db866f34e964c2b0da48945a2aa5f0e  0001-lib-name-node-and-port-in-new-server.patch
+"

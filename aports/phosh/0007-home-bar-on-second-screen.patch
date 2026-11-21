@@ -1,0 +1,289 @@
+From: winglm port
+Subject: [PATCH] home: home bar on the second screen
+
+While the app grid lives on the second screen (patch 0006, LG Wing T
+position) that screen also gets a home bar: swiping up on it opens the
+overview, swiping down closes it and a tap toggles it, like the home bar
+on the main screen. It reserves its height so windows don't cover it.
+
+Also keep the focus off the app grid's search entry when that screen's
+grid is shown: GTK focused the first focusable widget, the search entry,
+and the on-screen keyboard came up over the grid on every unfold.
+
+And don't pick a monitor that is being removed: the monitor manager
+disposes it (wl_output gone) before emitting monitor-removed and only
+drops it from its list afterwards, so the grid and bar surfaces got
+created on a dead wl_output and the compositor dropped the shell
+("unknown object ... get_layer_surface") when the swivel closed.
+
+And stop placing the app grid once the home is disposed (the shell
+replaces it when the primary monitor changes, e.g. both screens blanked
+at startup): the monitor signals stay connected until finalize and the
+overview was already gone. Placement updates requested while one runs
+(mapping a surface does a roundtrip, monitors come and go meanwhile) are
+run after it instead of inside it.
+---
+--- a/src/home.c
++++ b/src/home.c
+@@ -99,6 +99,11 @@
+   GtkWidget       *grid_home;    /* the app grid's place in the overview */
+   GtkWidget       *grid_surface; /* layer surface on grid_monitor */
+   PhoshMonitor    *grid_monitor;
++  GtkWidget       *bar_surface;  /* home bar on grid_monitor */
++  GtkGesture      *bar_drag;     /* on the bar's event box */
++  PhoshMonitor    *removed_monitor; /* going away, still listed */
++  gboolean         in_placement;    /* see update_app_grid_placement */
++  gboolean         placement_again;
+ };
+ G_DEFINE_TYPE (PhoshHome, phosh_home, PHOSH_TYPE_DRAG_SURFACE);
+ 
+@@ -241,7 +246,8 @@
+   for (guint i = 0; i < phosh_monitor_manager_get_num_monitors (mm); i++) {
+     PhoshMonitor *monitor = phosh_monitor_manager_get_monitor (mm, i);
+ 
+-    if (!monitor || monitor == primary || !monitor->name ||
++    if (!monitor || monitor == primary || monitor == self->removed_monitor ||
++        !monitor->name ||
+         !phosh_monitor_is_configured (monitor))
+       continue;
+ 
+@@ -259,7 +265,7 @@
+   GtkWidget *app_grid = GTK_WIDGET (phosh_overview_get_app_grid (self->overview));
+ 
+   /* Closed by the compositor (its output went away): save the app grid */
+-  if (gtk_widget_get_parent (app_grid) == surface)
++  if (gtk_widget_is_ancestor (app_grid, surface))
+     move_widget (app_grid, self->grid_home);
+ 
+   if (self->grid_surface == surface)
+@@ -268,19 +274,126 @@
+ }
+ 
+ 
++/* Home bar on the second screen: swipe up opens the overview, swipe down
++ * closes it, a tap toggles it, like the home bar on the main screen */
++#define SWIVEL_BAR_SWIPE_THRESHOLD 8
++
++static void
++on_swivel_bar_drag_end (PhoshHome      *self,
++                        double          offset_x,
++                        double          offset_y,
++                        GtkGestureDrag *gesture)
++{
++  PhoshHomeState state;
++
++  if (offset_y < -SWIVEL_BAR_SWIPE_THRESHOLD)
++    state = PHOSH_HOME_STATE_UNFOLDED;
++  else if (offset_y > SWIVEL_BAR_SWIPE_THRESHOLD)
++    state = PHOSH_HOME_STATE_FOLDED;
++  else if (ABS (offset_x) <= SWIVEL_BAR_SWIPE_THRESHOLD)
++    state = !self->state;
++  else
++    return;
++
++  g_debug ("Second screen home bar: %s",
++           state == PHOSH_HOME_STATE_UNFOLDED ? "unfold" : "fold");
++  phosh_home_set_state (self, state);
++}
++
++
++/* The gesture goes before the widgets: a GTK3 event controller that
++ * outlives its widget touches it when it is finalized */
++static void
++on_bar_surface_destroy (PhoshHome *self, GtkWidget *surface)
++{
++  if (self->bar_surface != surface)
++    return;
++
++  g_clear_object (&self->bar_drag);
++  self->bar_surface = NULL;
++}
++
++
++static void
++destroy_bar_surface (PhoshHome *self)
++{
++  GtkWidget *surface = g_steal_pointer (&self->bar_surface);
++
++  g_clear_object (&self->bar_drag);
++  if (!surface)
++    return;
++
++  g_signal_handlers_disconnect_by_data (surface, self);
++  gtk_widget_destroy (surface);
++}
++
++
++static void
++create_bar_surface (PhoshHome *self, PhoshMonitor *monitor)
++{
++  PhoshWayland *wl = phosh_wayland_get_default ();
++  GtkWidget *evbox, *box, *pill;
++
++  destroy_bar_surface (self);
++  self->bar_surface = g_object_new (PHOSH_TYPE_LAYER_SURFACE,
++                                    "layer-shell", phosh_wayland_get_zwlr_layer_shell_v1 (wl),
++                                    "wl-output", monitor->wl_output,
++                                    "anchor", ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM |
++                                              ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT |
++                                              ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT,
++                                    "layer", ZWLR_LAYER_SHELL_V1_LAYER_TOP,
++                                    "kbd-interactivity", FALSE,
++                                    "exclusive-zone", PHOSH_HOME_BAR_HEIGHT,
++                                    "height", PHOSH_HOME_BAR_HEIGHT,
++                                    "namespace", "phosh home bar",
++                                    NULL);
++
++  /* same widgets and style as the home bar on the main screen */
++  evbox = gtk_event_box_new ();
++  gtk_widget_set_hexpand (evbox, TRUE);
++  gtk_widget_set_size_request (evbox, -1, PHOSH_HOME_BAR_HEIGHT);
++  gtk_style_context_add_class (gtk_widget_get_style_context (evbox), "phosh-home-bar");
++  gtk_widget_add_events (evbox, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK |
++                         GDK_BUTTON_MOTION_MASK | GDK_TOUCH_MASK);
++  box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
++  gtk_widget_set_name (box, "home-bar");
++  gtk_widget_set_halign (box, GTK_ALIGN_CENTER);
++  gtk_widget_set_hexpand (box, TRUE);
++  pill = gtk_event_box_new ();
++  gtk_widget_set_name (pill, "powerbar");
++  gtk_widget_set_size_request (pill, 200, PHOSH_HOME_BAR_HEIGHT);
++  gtk_widget_set_halign (pill, GTK_ALIGN_CENTER);
++  gtk_widget_set_valign (pill, GTK_ALIGN_CENTER);
++  gtk_container_add (GTK_CONTAINER (box), pill);
++  gtk_container_add (GTK_CONTAINER (evbox), box);
++  gtk_container_add (GTK_CONTAINER (self->bar_surface), evbox);
++  gtk_widget_show_all (evbox);
++
++  self->bar_drag = gtk_gesture_drag_new (evbox);
++  g_signal_connect_object (self->bar_drag, "drag-end", G_CALLBACK (on_swivel_bar_drag_end),
++                           self, G_CONNECT_SWAPPED);
++  g_signal_connect_object (self->bar_surface, "destroy",
++                           G_CALLBACK (on_bar_surface_destroy), self,
++                           G_CONNECT_SWAPPED);
++  gtk_widget_set_visible (self->bar_surface, gtk_widget_get_visible (GTK_WIDGET (self)));
++}
++
++
+ static void
+ destroy_grid_surface (PhoshHome *self)
+ {
+   GtkWidget *surface = g_steal_pointer (&self->grid_surface);
+   GtkWidget *app_grid;
+ 
++  destroy_bar_surface (self);
++
+   if (!surface)
+     return;
+ 
+   app_grid = GTK_WIDGET (phosh_overview_get_app_grid (self->overview));
+ 
+   g_signal_handlers_disconnect_by_data (surface, self);
+-  if (gtk_widget_get_parent (app_grid) == surface)
++  if (gtk_widget_is_ancestor (app_grid, surface))
+     move_widget (app_grid, self->grid_home);
+   gtk_widget_destroy (surface);
+   g_clear_object (&self->grid_monitor);
+@@ -293,6 +406,7 @@
+   static GtkCssProvider *provider;
+   PhoshWayland *wl = phosh_wayland_get_default ();
+   GtkStyleContext *context;
++  GtkWidget *focus;
+ 
+   if (!provider) {
+     provider = gtk_css_provider_new ();
+@@ -319,16 +433,22 @@
+   gtk_style_context_add_provider (context, GTK_STYLE_PROVIDER (provider),
+                                   GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+   gtk_style_context_add_class (context, "phosh-app-grid-surface");
++  focus = gtk_event_box_new ();
++  gtk_widget_set_can_focus (focus, TRUE);
++  gtk_widget_show (focus);
++  gtk_container_add (GTK_CONTAINER (self->grid_surface), focus);
+   g_signal_connect_object (self->grid_surface, "destroy",
+                            G_CALLBACK (on_grid_surface_destroy), self,
+                            G_CONNECT_SWAPPED);
++
++  create_bar_surface (self, monitor);
+ }
+ 
+ 
+ /* Put the app grid on the second screen in the T position, show it while
+  * the home is unfolded */
+ static void
+-update_app_grid_placement (PhoshHome *self)
++update_app_grid_placement_once (PhoshHome *self)
+ {
+   GtkWidget *app_grid;
+   PhoshMonitor *monitor;
+@@ -346,18 +466,45 @@
+   if (monitor && !self->grid_surface)
+     create_grid_surface (self, monitor);
+ 
+-  move_widget (app_grid, self->grid_surface ?: self->grid_home);
++  move_widget (app_grid, self->grid_surface ?
++               gtk_bin_get_child (GTK_BIN (self->grid_surface)) : self->grid_home);
+ 
+   if (!self->grid_surface)
+     return;
+ 
+   show = self->state == PHOSH_HOME_STATE_UNFOLDED && gtk_widget_get_visible (GTK_WIDGET (self));
++  /* no focus on the search entry (and no OSK) until it's tapped */
++  if (show && !gtk_widget_get_visible (self->grid_surface))
++    gtk_window_set_focus (GTK_WINDOW (self->grid_surface),
++                          gtk_bin_get_child (GTK_BIN (self->grid_surface)));
+   gtk_widget_set_visible (self->grid_surface, show);
++  if (self->bar_surface)
++    gtk_widget_set_visible (self->bar_surface, gtk_widget_get_visible (GTK_WIDGET (self)));
+   /* the grid surface gets the keyboard (search) instead of the home */
+   phosh_layer_surface_set_kbd_interactivity (PHOSH_LAYER_SURFACE (self), FALSE);
+ }
+ 
+ 
++/* Mapping a layer surface does a Wayland roundtrip: monitors can come and go
++ * in the middle of a placement update, and their handlers would update again
++ * inside it. Run nested requests after the current one instead. */
++static void
++update_app_grid_placement (PhoshHome *self)
++{
++  if (self->in_placement) {
++    self->placement_again = TRUE;
++    return;
++  }
++
++  self->in_placement = TRUE;
++  do {
++    self->placement_again = FALSE;
++    update_app_grid_placement_once (self);
++  } while (self->placement_again && self->grid_home);
++  self->in_placement = FALSE;
++}
++
++
+ static void
+ on_monitor_added (PhoshHome *self, PhoshMonitor *monitor)
+ {
+@@ -374,7 +521,12 @@
+ {
+   if (monitor == self->grid_monitor)
+     destroy_grid_surface (self);
++  /* The monitor manager disposes the monitor (its wl_output is gone) before
++   * emitting monitor-removed and only drops it from its list afterwards: don't
++   * pick it again, a layer surface on a dead wl_output kills the shell */
++  self->removed_monitor = monitor;
+   update_app_grid_placement (self);
++  self->removed_monitor = NULL;
+ }
+ 
+ 
+@@ -944,6 +1096,10 @@
+   PhoshHome *self = PHOSH_HOME (object);
+ 
+   destroy_grid_surface (self);
++  /* The home goes away (e.g. the primary monitor changed) but the monitor
++   * signals stay connected until finalize, and the overview with the app
++   * grid's place is gone: no more placement updates */
++  self->grid_home = NULL;
+ 
+   g_clear_object (&self->settings);
+ 

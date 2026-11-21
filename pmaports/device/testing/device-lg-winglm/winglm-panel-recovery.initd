@@ -1,0 +1,16 @@
+#!/sbin/openrc-run
+
+description="Power-cycle LG Wing DSI panels after an SDE frame timeout (panel dead)"
+command=/usr/bin/winglm-panel-recovery
+supervisor=supervise-daemon
+output_logger="logger -t winglm-panel-recovery"
+
+depend() {
+	need localmount
+	after udev
+}
+
+start_pre() {
+	# connector id -> name lookup lives in debugfs
+	mountpoint -q /sys/kernel/debug || mount -t debugfs debugfs /sys/kernel/debug
+}

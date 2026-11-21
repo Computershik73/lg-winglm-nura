@@ -1,0 +1,13 @@
+#!/sbin/openrc-run
+# LG Wing: LG VSS init so the modem's SIM lock lets the USIM become ready
+supervisor=supervise-daemon
+name="LG Wing SIM (VSS) init"
+command=/usr/bin/winglm-vss
+output_log=/var/log/winglm-vss.log
+error_log=/var/log/winglm-vss.log
+respawn_delay=3
+
+depend() {
+	need qrtr-ns
+	before winglm-modem modemmanager
+}

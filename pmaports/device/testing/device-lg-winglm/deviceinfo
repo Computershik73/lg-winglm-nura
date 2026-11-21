@@ -1,0 +1,46 @@
+# Reference: <https://postmarketos.org/deviceinfo>
+# Please use double quotes only. You can source this file in shell
+# scripts.
+
+deviceinfo_format_version="0"
+deviceinfo_name="LG Wing"
+deviceinfo_manufacturer="LG"
+deviceinfo_codename="lg-winglm"
+deviceinfo_year="2020"
+# lito-mtp.dtb + lito-v2-mtp.dtb concatenated by linux-lg-winglm,
+# ABL picks the matching one by msm-id and applies the overlay from dtbo_X
+deviceinfo_dtb="vendor/qcom/lito-winglm"
+deviceinfo_arch="aarch64"
+
+# Device related
+deviceinfo_chassis="handset"
+deviceinfo_keyboard="false"
+deviceinfo_external_storage="true"
+deviceinfo_screen_width="1080"
+deviceinfo_screen_height="2460"
+deviceinfo_no_framebuffer="true"
+
+# Bootloader related
+# Stock ABL has no bootloader fastboot, only fastbootd (adb reboot fastboot)
+# The ABL reads only the 512-byte cmdline field of boot.img and drops the
+# extra_cmdline field: anything past 511 characters is cut, and the
+# pmos_*_uuid arguments come last. Keep kernel-cmdline.conf short.
+deviceinfo_flash_method="fastboot"
+deviceinfo_generate_bootimg="true"
+deviceinfo_header_version="2"
+deviceinfo_flash_pagesize="4096"
+deviceinfo_flash_offset_base="0x00000000"
+deviceinfo_flash_offset_kernel="0x00008000"
+deviceinfo_flash_offset_ramdisk="0x01000000"
+deviceinfo_flash_offset_second="0x00000000"
+deviceinfo_flash_offset_tags="0x00000100"
+deviceinfo_flash_offset_dtb="0x01f00000"
+# USB networking: RNDIS (what Android tethering on this kernel uses with
+# Windows) and a VID/PID that the Google ADB driver does not claim
+deviceinfo_usb_network_function="rndis.usb0"
+deviceinfo_usb_idVendor="0x1D6B"
+deviceinfo_usb_idProduct="0x0104"
+
+# UFS with 4K sectors
+deviceinfo_rootfs_image_sector_size="4096"
+deviceinfo_initfs_compression="gzip"
