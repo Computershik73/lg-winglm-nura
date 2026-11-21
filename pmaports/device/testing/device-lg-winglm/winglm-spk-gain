@@ -1,0 +1,123 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""winglm-spk-gain: speakerphone volume on the LG Wing.
+
+Call audio runs in the DSP voice path, and the DSP's own volume steps need
+calibration tables that are not loaded; the speaker's amplifier (TFA9878)
+has no volume control either. Its AMPGAIN field is a linear gain (half the
+value = -6 dB, measured) that the driver itself uses to fade out.
+
+This service owns that field. The session helper winglm-call-volume writes
+a percentage (0..100) into the FIFO /run/winglm-spk-gain (group audio);
+nothing else can be set: AMPGAIN = profile gain x (percentage/100)^3
+(PulseAudio's volume curve), never above the profile's gain, bottom -40 dB.
+
+The driver saves AMPGAIN when the amplifier mutes and restores it at the
+next start, so a lowered call volume would stay for music afterwards: at
+100 % the profile gain is put back whenever the amplifier runs with less.
+"""
+import glob
+import grp
+import os
+import select
+import sys
+import time
+
+FIFO = '/run/winglm-spk-gain'
+REG, POS, LEN = 0x52, 5, 8          # TFA9878 AMPGAIN
+MASK = ((1 << LEN) - 1) << POS
+PROFILE_GAIN = 195                  # AMPGAIN of the "music" profile (measured)
+MIN_FACTOR = 0.01                   # -40 dB
+WATCH = 20                          # s to watch the amplifier after a command
+
+
+def log(msg):
+    print('winglm-spk-gain: ' + msg, file=sys.stderr, flush=True)
+
+
+class Amp:
+    def __init__(self):
+        devs = sorted(glob.glob('/sys/bus/i2c/drivers/tfa98xx/*-*/rw'))
+        if not devs:
+            raise SystemExit('no TFA98xx amplifier')
+        self.dir = os.path.dirname(devs[0]) + '/'
+
+    def _select(self, reg):
+        with open(self.dir + 'reg', 'wb', buffering=0) as f:
+            f.write(bytes([reg]))
+
+    def read(self):
+        self._select(REG)
+        with open(self.dir + 'rw', 'rb', buffering=0) as f:
+            b = f.read(2)
+        return (b[0] << 8) | b[1]
+
+    def gain(self):
+        return (self.read() & MASK) >> POS
+
+    def set_gain(self, g):
+        v = self.read()
+        self._select(REG)
+        with open(self.dir + 'rw', 'wb', buffering=0) as f:
+            n = (v & ~MASK) | ((g << POS) & MASK)
+            f.write(bytes([n >> 8, n & 0xff]))
+
+
+def main():
+    amp = Amp()
+    ref = PROFILE_GAIN
+    pct = 100
+    last_cmd = 0.0
+
+    if os.path.exists(FIFO):
+        os.unlink(FIFO)
+    os.mkfifo(FIFO, 0o620)
+    os.chown(FIFO, 0, grp.getgrnam('audio').gr_gid)
+    os.chmod(FIFO, 0o620)
+    rfd = os.open(FIFO, os.O_RDONLY | os.O_NONBLOCK)
+    keep = os.open(FIFO, os.O_WRONLY)       # no EOF when writers go away
+    buf = b''
+
+    def apply():
+        nonlocal ref
+        try:
+            g = amp.gain()
+        except OSError as e:
+            log('amplifier not readable: %s' % e)
+            return
+        if g == 0:                          # off or muted: nothing to do
+            return
+        if pct >= 100:
+            if g > ref:                     # another profile's gain
+                ref = g
+            target = ref
+            # not during the driver's own fade-out: the value must hold still
+            if g < target:
+                time.sleep(0.1)
+                if amp.gain() != g:
+                    return
+        else:
+            target = max(1, round(ref * max((pct / 100) ** 3, MIN_FACTOR)))
+        if g != target:
+            amp.set_gain(target)
+            log('speaker gain %d -> %d (%d %%)' % (g, target, pct))
+
+    while True:
+        watching = pct < 100 or time.monotonic() - last_cmd < WATCH
+        r, _, _ = select.select([rfd], [], [], 1.0 if watching else None)
+        if r:
+            buf += os.read(rfd, 256)
+            lines = buf.split(b'\n')
+            buf = lines.pop()
+            for line in lines:
+                try:
+                    pct = min(max(int(line), 0), 100)
+                    last_cmd = time.monotonic()
+                except ValueError:
+                    pass
+        apply()
+    os.close(keep)
+
+
+if __name__ == '__main__':
+    main()

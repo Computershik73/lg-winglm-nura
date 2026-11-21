@@ -2,7 +2,7 @@
 pkgname=device-lg-winglm
 pkgdesc="LG Wing"
 pkgver=1
-pkgrel=38
+pkgrel=39
 url="https://postmarketos.org"
 license="MIT"
 arch="aarch64"
@@ -64,6 +64,8 @@ source="
 	winglm-vss.initd
 	winglm-voice
 	winglm-voice.initd
+	winglm-spk-gain
+	winglm-spk-gain.initd
 	ucm2/lito-mtp-snd-card.conf
 	ucm2/HiFi.conf
 	ucm2/VoiceCall.conf
@@ -207,7 +209,10 @@ dsp() {
 	# calls: DSP voice session while ModemManager has a call (instead of
 	# q6voiced, which gives up before the call route is set: no ringback)
 	install -Dm755 "$srcdir"/winglm-voice "$subpkgdir"/usr/bin/winglm-voice
-	for s in winglm-adsp winglm-rmtfs winglm-modem winglm-wlan winglm-bt winglm-vss winglm-voice; do
+	# speakerphone volume: the amplifier's gain, set from the session's
+	# call volume helper through a FIFO (percentage only)
+	install -Dm755 "$srcdir"/winglm-spk-gain "$subpkgdir"/usr/libexec/winglm-spk-gain
+	for s in winglm-adsp winglm-rmtfs winglm-modem winglm-wlan winglm-bt winglm-vss winglm-voice winglm-spk-gain; do
 		install -Dm755 "$srcdir"/$s.initd "$subpkgdir"/etc/init.d/$s
 	done
 	# modem data port for ModemManager, rmtfs shared memory
@@ -289,7 +294,7 @@ aac963d4785725d60d1059ceea7bc3e4621ed9a6120ee1a0aa2fcc668d9863059abfd4cacbd8599c
 f4656e1e5182c226d3dfb6a8db12b595740e3d43d904784ce4c6b871b108eaf7823e829c8150fa3bf9ddbb470c80bbaa2132e3e98ca6c772b2d3c2a176ee08f7  winglm-swivel.desktop
 72b1e03ab32849caf7e5ae40ee0c93ebe9732f731e10dfcdd47a917f448086dd91475cbe34b6cd4e415c5b75d0e4ae78b1974c0e58c05c411480d8b6a84163b9  winglm-pulse-session
 a89ff4acd3d3ccb577b7cac37fc74356e9867e4e48ca174b953c3e177e5976fd4c58e6a1b9fbc4f27b25b33d4c0787637f4d86b3c09e92e3b36363a20c27da69  winglm-pulse-session.desktop
-96799facf470a46ada727150dd95f0f08bac11fc42773e8cc92d086ac5976e0aa892b8542575091368f4da23b12875fa4c56f3454833867fceffd1f9d0ceebda  winglm-call-volume
+e417199acd6e7177219302ec2f80268c32a103e961bad5b42def2ed1a8ba55d6ed078325c3fec0885b42d180226ff0687daf49419e5874f8386afd5c37eb039f  winglm-call-volume
 712dce167e3d09958a3b15d7894cc946b5e1edd6d7df00cd1fa1f2ab70239edd801b96efea94d1d3fd441738482d8bec9c2d28e45be333843ad090b13fc1d1be  winglm-call-volume.desktop
 7d0ecb3ec1d4ab8d1bf0df2723e14c3bb74117720a60b4f6af8a596fdca514fb478a635511f636fdf42b01939127d84967ed005ffd584d4ac364640497b8fcc6  org.postmarketos.winglm.swivel.gschema.xml
 9c21a7923026cfa9aa50918a5800d521605d44f863b15c19e346478a98f78d8aaa3924b287771fdd0576fac86fb7413a29e72c52023ff381fb7aff7672777baa  90_winglm-phosh.gschema.override
@@ -308,6 +313,8 @@ f86d5abefc28e127fc670d6f494dbf74ad3096d638b88dd0c447afbcb43c30106d7781fd428615aa
 8afc748b883d8a6ad4b33501028434201896d43631a6960f35ea9d06015df3dc524cc7c7a4d461c7cf199e3efce4d8e100bd24eb2f1fabd7798191646d8ecbce  winglm-vss.initd
 f32acf52cf06cc4a60103fb18d23bb85a729f29f8476d89ae0c7b29da25a22c10f8ad27ba623c4d7aa6e4aab853ebb6657acf656223bc98682465510b9f11e4f  winglm-voice
 5b8206278a249fa654664a5365656ef15d60e4220028261f08d6d5fe1fe19a22353d05e37fb85e998d29cb5ed976ad16d2f081f72737cfea425b22026c28e265  winglm-voice.initd
+319d564922f94a18555197db22cd18f70adcebd7018adaa6678220fb9f2041bb05ca89778dc10bd9d42d84be9152bade253a5df011bd599725251812d5870e00  winglm-spk-gain
+b8c622ac4938dd51f5cacc0ff0f813d60e1bafad3c9de031d6acaf40ed444612e2304167168a65024147303bfc4ea1633ff21b7b8f9410ed1bec30a57e022f2a  winglm-spk-gain.initd
 bcbcddc867814bbbb3bf22926fe75addb32b86f117ac0c84009eca880d9c12286c97ae7bfd6d7c1e3fcf77e577ef2458124b2dbb49e344756dac65b60a6ebe4f  lito-mtp-snd-card.conf
 f00bd70af66a449b4c3c65b44e3cb137b7f06679822d3969c8899c109ec90e54f1c9e8bb55275e6805874c34c07c81ea3675ddf749a926590ea3cb79fc2f97d4  HiFi.conf
 8f6f72a2ead447faad8d4af4375d443a545a06315780b80d351d226750bc5e9e3daca88b00d2350a711910a85cd6d68f0ffba1b43636d8d83d83ca0470e4f405  VoiceCall.conf

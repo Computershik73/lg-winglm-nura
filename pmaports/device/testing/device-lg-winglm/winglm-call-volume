@@ -4,14 +4,16 @@
 
 Call audio runs in the DSP voice path, not through PulseAudio, so the volume
 keys (which change the PulseAudio sink volume) did nothing in a call. While
-the sound card is in a "Voice Call" profile, mirror the default sink's
-volume to the codec's digital gain of the earpiece/headset path and go back
-to 0 dB after the call. The speakerphone (TFA amplifier) is not covered.
-
-Needs linux-lg-winglm r7: older kernels refuse these controls above -44 dB
-(the writes then simply fail, nothing changes).
+the sound card is in a "Voice Call" profile, the default sink's volume
+drives:
+  - earpiece/headset: the codec's digital gain (RX_RX0/RX_RX1), back to
+    0 dB after the call (needs linux-lg-winglm r7+: older kernels refuse
+    these controls above -44 dB, the writes then simply fail);
+  - speakerphone: the amplifier gain, through the winglm-spk-gain service
+    (FIFO /run/winglm-spk-gain), back to 100 % otherwise.
 """
 import math
+import os
 import re
 import subprocess
 import sys
@@ -21,6 +23,7 @@ CONTROLS = ('RX_RX0 Digital Volume', 'RX_RX1 Digital Volume')
 ZERO_DB = 84        # raw value of 0 dB: the controls go from -84 to +40 dB
 MAX_DB = 6          # at 100 %
 MIN_DB = -40        # at the bottom of the scale (not muted)
+SPK_FIFO = '/run/winglm-spk-gain'
 EVENT = re.compile(r"on (sink|card) #|on server$")
 
 
@@ -33,12 +36,13 @@ def pactl(*args):
     return r.stdout if r.returncode == 0 else ''
 
 
-def in_call():
+def active_profile():
+    """e.g. 'voice call (mic, speaker)'"""
     for line in pactl('list', 'cards').splitlines():
         line = line.strip().lower()
-        if line.startswith('active profile:') and ('voice call' in line or 'voicecall' in line):
-            return True
-    return False
+        if line.startswith('active profile:'):
+            return line.split(':', 1)[1].strip()
+    return ''
 
 
 def sink_percent():
@@ -60,9 +64,25 @@ def gain(pct):
     return ZERO_DB + max(MIN_DB, min(MAX_DB, round(db)))
 
 
+def speaker(pct):
+    """tell winglm-spk-gain; it also uses every message to check that the
+    amplifier is back at full gain outside calls"""
+    try:
+        fd = os.open(SPK_FIFO, os.O_WRONLY | os.O_NONBLOCK)
+    except OSError:
+        return
+    try:
+        os.write(fd, b'%d\n' % round(min(max(pct, 0), 100)))
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
 class Volume:
     def __init__(self):
         self.value = None
+        self.spk = None
 
     def set(self, value):
         if value == self.value:
@@ -80,12 +100,19 @@ class Volume:
         self.value = value
 
     def update(self):
-        if in_call():
-            pct = sink_percent()
-            if pct is not None:
-                self.set(gain(pct))
+        prof = active_profile()
+        in_call = prof.startswith('voice call') or 'voicecall' in prof
+        on_speaker = in_call and 'speaker' in prof
+        pct = sink_percent() if in_call else None
+        if in_call and not on_speaker and pct is not None:
+            self.set(gain(pct))
         elif self.value is not None and self.value != ZERO_DB:
             self.set(ZERO_DB)
+        spk = pct if on_speaker and pct is not None else 100
+        if spk != self.spk:
+            log('speakerphone volume %d %%' % spk)
+            self.spk = spk
+        speaker(spk)
 
 
 def main():

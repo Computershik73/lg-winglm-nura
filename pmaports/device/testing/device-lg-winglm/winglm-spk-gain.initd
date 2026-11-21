@@ -1,0 +1,13 @@
+#!/sbin/openrc-run
+
+supervisor=supervise-daemon
+description="LG Wing: speakerphone volume (amplifier gain)"
+command=/usr/libexec/winglm-spk-gain
+output_log=/var/log/winglm-spk-gain.log
+error_log=/var/log/winglm-spk-gain.log
+respawn_delay=2
+respawn_max=5
+
+depend() {
+	need winglm-adsp
+}
