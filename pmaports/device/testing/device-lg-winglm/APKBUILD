@@ -32,6 +32,7 @@ source="
 	90-winglm-small-only.conf
 	50-winglm-logind.conf
 	50-winglm-sleep.conf
+	90-winglm-upower.conf
 	50-winglm-usb0.conf
 	polkit.confd
 	winglm-panel-recovery
@@ -96,6 +97,11 @@ package() {
 		"$pkgdir"/etc/elogind/logind.conf.d/50-winglm.conf
 	install -Dm644 "$srcdir"/50-winglm-sleep.conf \
 		"$pkgdir"/etc/elogind/sleep.conf.d/50-winglm.conf
+
+	# the swivel sensor is a SW_LID switch, but not a lid: GNOME Settings
+	# treated "closed" as "no usable display" (empty Displays page, crash)
+	install -Dm644 "$srcdir"/90-winglm-upower.conf \
+		"$pkgdir"/etc/UPower/UPower.conf.d/90-winglm.conf
 
 	# polkitd as its own user (pidfd lookups), started before NM/MM
 	install -Dm644 "$srcdir"/polkit.confd "$pkgdir"/etc/conf.d/polkit
