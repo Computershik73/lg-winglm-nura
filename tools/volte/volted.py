@@ -123,6 +123,7 @@ class Call:
         self.rseq = 0
         self.pending_answer = None
         self.media_started = False
+        self.early_media_logged = False
         self.answer_sent = False
         self.caller = None
         self.calls_ip = '127.0.0.1'
@@ -476,9 +477,49 @@ class Manager:
                                    body=SDP.local_sdp(call.relay.loc_port)), addr)
             return
         if not self.ims_registered():
-            log('MO call but IMS not registered')
-            self._loc_final(call, 503)
+            self._mo_wait_ims(call, inv, addr, number)
             return
+        self._mo_place(call, inv, addr, number)
+
+    # An outgoing call while IMS is down (it comes back by itself, e.g. after
+    # the modem was switched off and on): wait a little for it, then dial
+    # over 2G/3G through ModemManager. GNOME Calls shows that as a modem call;
+    # its SIP leg ends with 480 (503 would make Calls report "DNS error").
+    IMS_WAIT = 10
+
+    def _mo_wait_ims(self, call, inv, addr, number):
+        log('MO call but IMS not registered: waiting up to %d s' % self.IMS_WAIT)
+        call.state = 'waiting'
+        t0 = time.monotonic()
+
+        def check():
+            if call.state != 'waiting':         # cancelled in Calls meanwhile
+                return False
+            if self.ims_registered():
+                log('IMS registered: placing the call')
+                self._mo_place(call, inv, addr, number)
+            elif time.monotonic() - t0 < self.IMS_WAIT:
+                return True
+            else:
+                self._mo_cs_fallback(call, number)
+            return False
+        GLib.timeout_add(500, check)
+
+    def _mo_cs_fallback(self, call, number):
+        from imsreg2 import run
+        self._loc_final(call, 480)
+        self.end(call)
+        num = re.sub(r'[^\d+*#]', '', number)
+        r = run('mmcli -m any --voice-create-call="number=%s"' % num)
+        path = re.search(r'/Call/(\d+)', r.stdout)
+        if not path:
+            log('IMS still down, and the modem refused the call: %s' % (r.stdout + r.stderr).strip()[:120])
+            return
+        r = run('mmcli -o %s --start' % path.group(1))
+        log('IMS still down: dialing over the modem (CS)%s' % ('' if r.returncode == 0 else
+                                                               ', start failed: ' + r.stderr.strip()[:100]))
+
+    def _mo_place(self, call, inv, addr, number):
         offer = SDP.Sdp(inv.body)
         log('calls SDP: %s' % inv.body.replace('\r\n', ' | ')[:600])
         call.calls_rtp = offer.port
@@ -543,12 +584,19 @@ class Manager:
                 pr = self._net_req(call, 'PRACK')
                 pr.add('RAck', '%s %d INVITE' % (r.get('RSeq'), n.invite.cseq))
                 self.ims.send_request(pr, lambda x: None)
+            # GNOME Calls plays its own ringback tone on any 18x. With early
+            # media the network plays ringback and announcements itself (in
+            # the modem), so Calls stays at "calling"; only a 180 without
+            # early media gets the local tone.
             if r.code in (180, 183) and call.state == 'calling':
-                lr = response(call.loc.invite, 180 if r.code == 180 or call.media_started else 183,
-                              to_tag=call.loc.local_tag,
-                              extra=[('Contact', '<sip:volte@127.0.0.1:%d>' % LOCAL_PORT)],
-                              body=SDP.local_sdp(call.relay.loc_port) if call.media_started else '')
-                self.loc_send(lr, call.loc.via)
+                if call.media_started:
+                    if not call.early_media_logged:
+                        log('early media from the network: no local ringback')
+                        call.early_media_logged = True
+                elif r.code == 180:
+                    lr = response(call.loc.invite, 180, to_tag=call.loc.local_tag,
+                                  extra=[('Contact', '<sip:volte@127.0.0.1:%d>' % LOCAL_PORT)])
+                    self.loc_send(lr, call.loc.via)
             return
         if r.code < 300:
             ack = self._net_req(call, 'ACK', cseq=n.invite.cseq)
