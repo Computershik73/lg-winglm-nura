@@ -1,8 +1,8 @@
 #!/bin/bash
 # Regenerate phosh patches 0002 and 0003 from the upstream source in ~/phosh-src
 set -e
-S=/mnt/c/Users/User/AppData/Local/Temp/claude/09dffbddec4c1633/dd1f1da9-6870-4ea2-9c9e-29465f940410/scratchpad
-P=/mnt/c/MICD/profiles/d19bc6bc-1286-4caf-9fe1-c0fc5c4175a3/scratch-workspaces/7f4c33e3-713d-4694-9eaa-57d6e1528aa0/4559bdd3-f3f8-4a6b-afb9-1e62cbd0b548/scratch-2026-11-13-581527/pmaports/temp/phosh
+S=$HOME/lg-wing-port/tools
+P=$HOME/lg-wing-port/pmaports/temp/phosh
 U=~/phosh-src/phosh-0.58.0/src
 
 # 0002: keypad (keep the existing header)

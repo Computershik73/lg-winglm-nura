@@ -1,8 +1,8 @@
 #!/bin/bash
 # Generate phosh 0007 (home bar on the second screen) on top of 0006, check the whole series applies
 set -e
-S=/mnt/c/Users/User/AppData/Local/Temp/claude/09dffbddec4c1633/dd1f1da9-6870-4ea2-9c9e-29465f940410/scratchpad
-WS=/mnt/c/MICD/profiles/d19bc6bc-1286-4caf-9fe1-c0fc5c4175a3/scratch-workspaces/7f4c33e3-713d-4694-9eaa-57d6e1528aa0/4559bdd3-f3f8-4a6b-afb9-1e62cbd0b548/scratch-2026-11-13-581527/pmaports/temp
+S=$HOME/lg-wing-port/tools
+WS=$HOME/lg-wing-port/pmaports/temp
 UPHOSH=~/phosh-src/phosh-0.58.0
 OUT=$WS/phosh/0007-home-bar-on-second-screen.patch
 W=$(mktemp -d ~/phosh-src/swipe.XXXX)

@@ -1,6 +1,7 @@
+import os
 import sys, subprocess
 sys.argv = [sys.argv[0], sys.argv[1], '-', 'noop'] + sys.argv[2:]
-exec(open('/mnt/c/Users/User/AppData/Local/Temp/claude/09dffbddec4c1633/dd1f1da9-6870-4ea2-9c9e-29465f940410/scratchpad/elfx.py').read().split("if sys.argv[2] == '-':")[0])
+exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'elfx.py')).read().split("if sys.argv[2] == '-':")[0])
 want = sys.argv[4]
 addr = {n: v for n, v in syms.values()}
 byaddr = {}

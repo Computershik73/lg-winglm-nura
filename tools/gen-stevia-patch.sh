@@ -1,8 +1,8 @@
 #!/bin/bash
 # Generate pmaports/temp/stevia/0001-osk-output-setting.patch from the upstream stevia source
 set -e
-S=/mnt/c/Users/User/AppData/Local/Temp/claude/09dffbddec4c1633/dd1f1da9-6870-4ea2-9c9e-29465f940410/scratchpad
-P=/mnt/c/MICD/profiles/d19bc6bc-1286-4caf-9fe1-c0fc5c4175a3/scratch-workspaces/7f4c33e3-713d-4694-9eaa-57d6e1528aa0/4559bdd3-f3f8-4a6b-afb9-1e62cbd0b548/scratch-2026-11-13-581527/pmaports/temp/stevia
+S=$HOME/lg-wing-port/tools
+P=$HOME/lg-wing-port/pmaports/temp/stevia
 U=~/stevia-src/phosh-osk-stevia-0.58.0
 FILES="data/mobi.phosh.osk.gschema.xml src/pos-output.h src/pos-output.c src/pos-size-manager.h src/pos-size-manager.c src/phosh-osk-stevia.c src/pos-input-surface.c"
 W=$(mktemp -d ~/stevia-src/pw.XXXX)

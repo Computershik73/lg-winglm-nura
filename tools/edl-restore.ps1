@@ -1,12 +1,14 @@
 # Restore boot_a (LUN4 @ sector 67974) from pmos-out\boot-r4.img over EDL.
+# usage: edl-restore.ps1 -Prog <prog_ufs_firehose_sm7250_lge.elf> -Out <dir with boot image> -Gpt <dir with the fh_gpt_* dumps of your QFIL backup>
+param([Parameter(Mandatory)] [string]$Prog, [Parameter(Mandatory)] [string]$Out, [Parameter(Mandatory)] [string]$Gpt)
 $ErrorActionPreference = 'Stop'
 $qpst = 'C:\Program Files (x86)\Qualcomm\QPST\bin'
 $fh = "$qpst\fh_loader.exe"
 $sahara = "$qpst\QSaharaServer.exe"
-$prog = 'C:\Users\User\Downloads\Velvet_Wing_unlock\prog_ufs_firehose_sm7250_lge.elf'
-$O = 'C:\Users\User\Documents\ChatGPT\wing\pmos-out'
+$prog = $Prog
+$O = $Out
 $W = "$O\edl"
-$G = 'C:\Users\User\Documents\ChatGPT\wing\backups\F100N20e-original\partitions\gpt'
+$G = $Gpt
 $img = 'boot-r4.img'
 $exp = '4AADBD717180AE207E7B9F9BD7C82EB76112F04CF1A658532B521638D238A76B'
 

@@ -3,7 +3,7 @@
 # the phone's ~/aports/calls.  usage: mkaport.sh PKGREL
 set -e
 REL=${1:?pkgrel}
-PD=/mnt/c/Users/User/AppData/Local/Temp/claude/09dffbddec4c1633/dd1f1da9-6870-4ea2-9c9e-29465f940410/scratchpad/calls-patch
+PD=$HOME/lg-wing-port/tools/calls-patch
 P=0001-dial-pad-window-on-a-second-screen.patch
 cd ~/calls-dl
 rm -rf p && mkdir -p p/x p/y

@@ -1,8 +1,8 @@
 #!/bin/bash
 # Generate phoc 0005/0006 and phosh 0004/0005/0006 against upstream, check they apply on top of the aports' patches
 set -e
-S=/mnt/c/Users/User/AppData/Local/Temp/claude/09dffbddec4c1633/dd1f1da9-6870-4ea2-9c9e-29465f940410/scratchpad
-WS=/mnt/c/MICD/profiles/d19bc6bc-1286-4caf-9fe1-c0fc5c4175a3/scratch-workspaces/7f4c33e3-713d-4694-9eaa-57d6e1528aa0/4559bdd3-f3f8-4a6b-afb9-1e62cbd0b548/scratch-2026-11-13-581527/pmaports/temp
+S=$HOME/lg-wing-port/tools
+WS=$HOME/lg-wing-port/pmaports/temp
 UPHOC=~/phosh-src/phoc-0.58.0
 UPHOSH=~/phosh-src/phosh-0.58.0
 H=$(mktemp -d)

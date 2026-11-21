@@ -2,8 +2,8 @@
 # one git repo for the whole LG Wing port: pmaports packages, the Alpine
 # package forks built on the phone, and the tools/prototypes
 set -e
-SP=/mnt/c/Users/User/AppData/Local/Temp/claude/09dffbddec4c1633/dd1f1da9-6870-4ea2-9c9e-29465f940410/scratchpad
-W=/mnt/c/MICD/profiles/d19bc6bc-1286-4caf-9fe1-c0fc5c4175a3/scratch-workspaces/7f4c33e3-713d-4694-9eaa-57d6e1528aa0/4559bdd3-f3f8-4a6b-afb9-1e62cbd0b548/scratch-2026-11-13-581527/pmaports
+SP=$HOME/lg-wing-port/tools
+W=$HOME/lg-wing-port/pmaports
 PMA=$HOME/.local/var/pmbootstrap/cache_git/pmaports
 R=$HOME/lg-wing-port
 
