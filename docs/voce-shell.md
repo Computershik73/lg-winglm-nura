@@ -92,6 +92,10 @@ phrog lists the session as **Voce** (`/usr/share/wayland-sessions/voce.desktop`,
   portal and DBusActivatable apps reach its socket; GTK apps then get their
   settings from the portal (no window buttons with `button-layout=appmenu:`,
   dark style) like under Phosh;
+* the shell implements Mutter's display API `org.gnome.Mutter.DisplayConfig`
+  (as Phosh does): GNOME Settings shows the screen and changes the apps'
+  scale (wl_output scale) at runtime; a scale applied there is kept in
+  `~/.config/voce-shell/display.ini` and wins over `WMS_CLIENT_SCALE`;
 * logs to `~/.cache/voce-shell/session.log`; `~/.config/voce-shell/env` is
   sourced first for tests (`VOCE_OUTPUT`, `VOCE_SHELL`, `WMS_UI_SCALE`, Qt
   variables).
@@ -124,7 +128,7 @@ logs into Voce once without the greeter (`... 'sh -s phosh'` back to Phosh).
 | Apps from the grid | ⚠️ software rendering only (see GPU above); mobile layouts at scale 3, dialogs, closed windows leave the window list |
 | Volume slider | ❌ uses `wpctl` (PipeWire); the phone uses PulseAudio, and no audio server is started in the session |
 | Calls | ❌ `voce-dialer`/`CallWatcher` only know ModemManager (CS); VoLTE goes through `winglm-volte` + GNOME Calls (SIP), not started here; no callaudiod/feedbackd/PulseAudio |
-| GNOME Settings | ✅ mobile layout, dark style, no window buttons; ❌ the Displays page (needs `org.gnome.Mutter.DisplayConfig`, which Phosh implements) |
+| GNOME Settings | ✅ mobile layout, dark style, no window buttons; Displays page: scale 100–400 % applied live and saved (the shell implements `org.gnome.Mutter.DisplayConfig` like Phosh); rotation is refused (portrait layout only), Night Light not supported |
 | Notifications | ❔ the server runs; untested |
 | On-screen keyboard | ❌ none (hardware QWERTY is the plan; no XKB layout set yet) |
 | Bluetooth / airplane toggles | ❌ `rfkill` as the user: `/dev/rfkill` is root-only; airplane mode does not touch the modem |
