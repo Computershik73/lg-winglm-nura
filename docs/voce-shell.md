@@ -53,10 +53,16 @@ boot image flash.
   `mpris-proxy`, ...). `voce-shell-session` leaves out GNOME's settings
   daemons and the port's swivel and brightness daemons
   (`WMS_AUTOSTART_SKIP`).
-* **Own apps** in the same package: `voce-dialer` (calls log, contacts,
-  dial pad, messages; ModemManager over D-Bus) and `voce-organizer` (clock,
-  calendar, calculator, files). Their `.desktop` files get
-  `OnlyShowIn=Voce;`, so Phosh does not list them.
+* **Own apps** in the same package: `voce-dialer` (call history, contacts,
+  dial pad, SMS conversations) and `voce-organizer` (world clock, alarms,
+  stopwatch, timer, calendar with reminders, calculator, files, memory).
+  Their `.desktop` files get `OnlyShowIn=Voce;`, so Phosh does not list
+  them. Since r12 both run as one instance per session
+  (`org.voceos.Dialer`/`Organizer` on the session bus) and start in the
+  background from `/etc/xdg/autostart` (`--daemon`): SMS notifications,
+  alarms, timer and reminders work with the window closed. The dialer
+  places calls through GNOME Calls when it runs (VoLTE) and shows GNOME
+  Calls' call history (`~/.local/share/calls/records.db`, read only).
 
 ## The session
 
@@ -138,7 +144,9 @@ logs into Voce once without the greeter (`... 'sh -s phosh'` back to Phosh).
 | Lock screen | ⚠️ swipe only, no PIN |
 | Apps from the grid | ⚠️ software rendering only (see GPU above); mobile layouts at scale 3, dialogs, closed windows leave the window list; touches mapped to the surface (QtWayland sends them unmapped, `VoceShellSurfaceItem` fixes it). r10: windows can no longer be dragged around, stay maximized, popups/dropdowns are kept on screen (flip/slide by the xdg_positioner rules); grid honours `OnlyShowIn`/`NotShowIn`/`TryExec`, reloads on install, design icons without an app open the organizer/dialer tab or a GNOME Software search |
 | Volume slider, volume keys | r10: PulseAudio (`pactl`), level bar on the keys; PulseAudio now started by the session (autostart) |
-| Calls | r10: GNOME Calls runs in the session (autostart) and handles CS and VoLTE as under Phosh; the shell's call overlay follows it over D-Bus. Not yet tested with a real call |
+| Calls | r10: GNOME Calls runs in the session (autostart) and handles CS and VoLTE as under Phosh; the shell's call overlay follows it over D-Bus. r12: `voce-dialer` dials through GNOME Calls and shows its history. Not yet tested with a real call |
+| SMS | r12: conversations, compose/send through ModemManager, live incoming SMS with notification; receiving and sending not yet tested with real messages |
+| Organizer | r12: alarms (repeat days, snooze, feedbackd sound), timer and calendar reminders work with the window closed; r10/r11 organizer did not start (QML error), fixed in r12 |
 | GNOME Settings | ✅ mobile layout, dark style, no window buttons; Displays page: scale 100–400 % and orientation (0/90/180/270°) applied live and saved (the shell implements `org.gnome.Mutter.DisplayConfig` like Phosh); Night Light not supported |
 | Notifications | ⚠️ the server runs; r10: lock screen entries can be opened/swiped away, the dots clear them all |
 | On-screen keyboard | ❌ none (hardware QWERTY is the plan; no XKB layout set yet) |
@@ -151,9 +159,9 @@ logs into Voce once without the greeter (`... 'sh -s phosh'` back to Phosh).
 ## Plan
 
 1. ~~Session services~~ (r10: XDG autostart in the shell).
-2. **Calls**: r10 runs GNOME Calls and the shell's call overlay follows it.
-   Left: `voce-dialer` still dials through ModemManager directly (no VoLTE)
-   and has no SMS conversation view or sending.
+2. ~~Calls~~ (r10/r12: GNOME Calls in the session; the dialer and the
+   call overlay use it). Left: contacts are the dialer's own list, not the
+   EDS address book GNOME Calls uses.
 3. **Shell fixes** (branch `nura-winglm`): drop or rotate
    `~/shell_debug.log` (grows forever); DPMS off through the eglfs screen
    power state instead of backlight 0.
