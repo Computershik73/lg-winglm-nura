@@ -16,14 +16,14 @@
 # different gzip bytes: run "abuild checksum" then.)
 pkgname=voce-shell
 pkgver=0.2_git20261121
-pkgrel=9
-_commit=a7d76fe9c34450d59eeab389b8b36791bdcdec12
+pkgrel=11
+_commit=ab35fb7d0357517feab3b7737d2dcc7ea5e88fa1
 pkgdesc="Voce mobile shell (Qt 6 Wayland compositor) as a session on the LG Wing swivel screen"
 url="https://github.com/VoceOS/voce-shell"
 arch="aarch64"
 license="GPL-3.0-or-later AND OFL-1.1"
 depends="
-	cmd:rfkill
+	cmd:pactl
 	dbus
 	networkmanager-cli
 	qt6-qtdeclarative
@@ -66,9 +66,9 @@ package() {
 		"$pkgdir"/usr/share/xdg-desktop-portal/voce-portals.conf
 
 	# upstream's udev rule makes backlights and flash LEDs writable for the
-	# video group. Brightness goes through logind here (Session.SetBrightness);
-	# the Wing's torch is a Qualcomm torch + switch LED pair the shell does not
-	# drive yet, so the rule would only open up the flash LEDs.
+	# video group. Not needed here: brightness and the torch (the Wing's
+	# Qualcomm torch + switch LED pair) go through logind
+	# (Session.SetBrightness), as in Phosh.
 	rm -r "$pkgdir"/usr/lib/udev
 
 	# The shell's own dialer and organizer: only in the Voce session, Phosh
@@ -79,8 +79,8 @@ package() {
 }
 
 sha512sums="
-007ea3d6873f1758c1d9dfa0706fc69548f0630e9c3636c163564cfa5792ad3cc13ea131d1d5b74e28dfcebb5f5fdc40221e000f938b336cf48c897d6e0f97c7  voce-shell-a7d76fe9c34450d59eeab389b8b36791bdcdec12.tar.gz
+a66a9dcd25d620ebd004c7e01fca81c569b403e0f4b84d6f9c325bd965873c77a3d8561d7367bdfa355bfc7d6e4e7f4db241cbaa1e249488d9e4560337dbb983  voce-shell-ab35fb7d0357517feab3b7737d2dcc7ea5e88fa1.tar.gz
 9f8ca1f516a8a14f9e37bf728070f967ac7de799d5285f1b5aa6dd63ffd2bce0f3a2fd838bee0971f14a230be858912afa8a9080cd6bb1f72ce189e3fd33458e  voce-portals.conf
-1a7cf5d0026fa30eea03ef4a489da16c519783c8df7bdbe96441507ba79f255f772773c8afc2e9b29343f17a7af78a31c0870cb93ebd97e878f1d80055722fd0  voce-shell-session
+25961f6ce5c207f2a66f2bfc9c86d4734984dfce1f39c6d15fdc0d9103415eaa233bb14cb8431250c0e4d87d9eb29a73763e54e9b50cdb7f22993493988f7fd7  voce-shell-session
 2f9626d88965ab6b7a73965f93498fa13addd3faf7f0c387e199415f1e62fff2e6a83f535d8ac99ad0a6705107de701a0bccfc7759e473ceef8460cdc9a3beeb  voce.desktop
 "

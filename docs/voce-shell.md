@@ -39,11 +39,20 @@ boot image flash.
   (`QT_QUICK_BACKEND=software`, `LIBGL_ALWAYS_SOFTWARE=1`): Mesa 26 has no
   `EGL_WL_bind_wayland_display`, and QtWaylandCompositor's hardware buffer
   integrations (wl_drm and `linux-dmabuf-unstable-v1`) both still require it.
-* **System services it talks to**: UPower (battery), NetworkManager
-  (`nmcli`), `rfkill`, PipeWire (`wpctl`, volume), the backlight (sysfs, or
-  logind `Session.SetBrightness` when sysfs is not writable),
-  ModemManager (`CallWatcher`: incoming/outgoing call overlay, CS calls
-  only). It is the session's `org.freedesktop.Notifications` server.
+* **System services it talks to** (all asynchronously, since r10): UPower
+  (battery), NetworkManager (`nmcli`: Wi-Fi, airplane mode, mobile data),
+  BlueZ (Bluetooth), PulseAudio (`pactl`, volume; `wpctl` when there is no
+  `pactl`), ModemManager (signal strength), logind (backlight and torch
+  through `Session.SetBrightness` when sysfs is not writable; power off and
+  restart), MPRIS players (music widget), GNOME Calls (`org.gnome.Calls`,
+  call overlay; ModemManager when GNOME Calls is not running). It is the
+  session's `org.freedesktop.Notifications` server.
+* **Session services**: the shell starts XDG autostart entries like
+  gnome-session does for Phosh (PulseAudio, `winglm-pulse-session`,
+  `winglm-call-volume`, `winglm-volte-calls`, GNOME Calls, keyring, PipeWire,
+  `mpris-proxy`, ...). `voce-shell-session` leaves out GNOME's settings
+  daemons and the port's swivel and brightness daemons
+  (`WMS_AUTOSTART_SKIP`).
 * **Own apps** in the same package: `voce-dialer` (calls log, contacts,
   dial pad, messages; ModemManager over D-Bus) and `voce-organizer` (clock,
   calendar, calculator, files). Their `.desktop` files get
@@ -123,32 +132,29 @@ logs into Voce once without the greeter (`... 'sh -s phosh'` back to Phosh).
 | Session from phrog next to Phosh, Phosh unchanged | ✅ |
 | Swivel screen only, main screen off, GPU rendering (zink/turnip) | ✅ |
 | Touch on the swivel screen | ✅ |
-| Power key: blank/wake, hold → Log out | ✅ (backlight through logind) |
+| Power key: blank/wake, hold → power menu | ✅ (backlight through logind); r10: Power off / Restart (logind) next to Log out |
 | Brightness slider (shade) | ✅ panel1 through logind, asynchronous; the value is kept in `~/.config/voce-shell/shell.ini` and applied at start |
 | Battery level (UPower) | ✅ |
 | Lock screen | ⚠️ swipe only, no PIN |
-| Apps from the grid | ⚠️ software rendering only (see GPU above); mobile layouts at scale 3, dialogs, closed windows leave the window list; touches mapped to the surface (QtWayland sends them unmapped, `VoceShellSurfaceItem` fixes it) |
-| Volume slider | ❌ uses `wpctl` (PipeWire); the phone uses PulseAudio, and no audio server is started in the session |
-| Calls | ❌ `voce-dialer`/`CallWatcher` only know ModemManager (CS); VoLTE goes through `winglm-volte` + GNOME Calls (SIP), not started here; no callaudiod/feedbackd/PulseAudio |
+| Apps from the grid | ⚠️ software rendering only (see GPU above); mobile layouts at scale 3, dialogs, closed windows leave the window list; touches mapped to the surface (QtWayland sends them unmapped, `VoceShellSurfaceItem` fixes it). r10: windows can no longer be dragged around, stay maximized, popups/dropdowns are kept on screen (flip/slide by the xdg_positioner rules); grid honours `OnlyShowIn`/`NotShowIn`/`TryExec`, reloads on install, design icons without an app open the organizer/dialer tab or a GNOME Software search |
+| Volume slider, volume keys | r10: PulseAudio (`pactl`), level bar on the keys; PulseAudio now started by the session (autostart) |
+| Calls | r10: GNOME Calls runs in the session (autostart) and handles CS and VoLTE as under Phosh; the shell's call overlay follows it over D-Bus. Not yet tested with a real call |
 | GNOME Settings | ✅ mobile layout, dark style, no window buttons; Displays page: scale 100–400 % and orientation (0/90/180/270°) applied live and saved (the shell implements `org.gnome.Mutter.DisplayConfig` like Phosh); Night Light not supported |
-| Notifications | ❔ the server runs; untested |
+| Notifications | ⚠️ the server runs; r10: lock screen entries can be opened/swiped away, the dots clear them all |
 | On-screen keyboard | ❌ none (hardware QWERTY is the plan; no XKB layout set yet) |
-| Bluetooth / airplane toggles | ❌ `rfkill` as the user: `/dev/rfkill` is root-only; airplane mode does not touch the modem |
-| Flashlight | ❌ the Wing's torch is a Qualcomm torch + switch LED pair |
+| Bluetooth / airplane / mobile data toggles | r10: BlueZ `Adapter1.Powered`; airplane = `nmcli radio all` + BlueZ; mobile data = the gsm connection up/down (modem stays on for calls) |
+| Flashlight | r10: `led:torch_0` + `led:switch_0` through logind |
+| Status bar | r10: signal bars from ModemManager, Wi-Fi strength from NetworkManager |
+| Widgets | r10: greeting with the user's name, music widget for any MPRIS player; no navigation service (the widget says so and opens maps) |
 | Real screen off (DPMS) / suspend | ❌ blanking only sets the backlight to 0; suspend does not work on this kernel anyway |
 
 ## Plan
 
-1. **Session services** in `voce-shell-session` (or a small autostart
-   list): PulseAudio + `winglm-pulse-session`, feedbackd, `winglm-call-volume`.
-2. **Calls**: keep GNOME Calls as the headless call backend (it already does
-   SIP/VoLTE through `winglm-volte` and CS through ModemManager) and let the
-   shell's call overlay and `voce-dialer` drive it over its D-Bus API,
-   instead of talking to ModemManager directly; callaudiod for routing.
-3. **Shell fixes** (branch `nura-winglm`): volume through PulseAudio
-   (`pactl`) when PipeWire is not the server; run `nmcli`/`rfkill`/volume
-   polling asynchronously (today they block the compositor thread every 5 s);
-   honour `OnlyShowIn`/`NotShowIn` in the app grid; drop or rotate
+1. ~~Session services~~ (r10: XDG autostart in the shell).
+2. **Calls**: r10 runs GNOME Calls and the shell's call overlay follows it.
+   Left: `voce-dialer` still dials through ModemManager directly (no VoLTE)
+   and has no SMS conversation view or sending.
+3. **Shell fixes** (branch `nura-winglm`): drop or rotate
    `~/shell_debug.log` (grows forever); DPMS off through the eglfs screen
    power state instead of backlight 0.
 4. **GPU for apps**: patch qt6-qtwayland so the compositor's
@@ -160,5 +166,4 @@ logs into Voce once without the greeter (`... 'sh -s phosh'` back to Phosh).
    screen, call overlay) and shortcuts; on-screen keyboard only as an option
    (`text-input`/`input-method`). Ask the user how the keyboard connects
    once the shell work needs it.
-6. **Lock screen PIN** (PAM), torch through the Qualcomm LEDs, Bluetooth
-   through BlueZ D-Bus instead of `rfkill`.
+6. **Lock screen PIN** (PAM).

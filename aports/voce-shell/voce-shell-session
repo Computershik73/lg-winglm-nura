@@ -13,6 +13,8 @@
 #   VOCE_SHELL         binary to run (default /usr/bin/wayland-mobile-shell)
 #   WMS_UI_SCALE       size of the shell's interface (default 2.5 for the
 #                      ~420 ppi swivel panel; apps are not affected)
+#   WMS_AUTOSTART_SKIP autostart entries (ids, * allowed) the shell does not
+#                      start; WMS_NO_AUTOSTART=1 starts none
 
 [ -f "$HOME/.config/voce-shell/env" ] && . "$HOME/.config/voce-shell/env"
 
@@ -76,6 +78,14 @@ export WMS_UI_SCALE="${WMS_UI_SCALE:-2.5}"
 # Apps see an output scale of 3, as under Phosh: 360x413 logical pixels, so
 # GTK/libadwaita apps use their mobile layouts
 export WMS_CLIENT_SCALE="${WMS_CLIENT_SCALE:-3}"
+# The shell starts the session's services from XDG autostart, as
+# gnome-session does for Phosh: PulseAudio, the keyring, GNOME Calls (it
+# carries VoLTE calls through its SIP account), the port's call audio
+# helpers. Left out: GNOME's settings daemons (they need Mutter/GNOME Shell
+# interfaces the shell does not have; gsd-power would also blank and suspend
+# behind its back), and the port's swivel and brightness daemons - the shell
+# keeps the swivel screen on and owns its brightness itself.
+export WMS_AUTOSTART_SKIP="${WMS_AUTOSTART_SKIP-org.gnome.SettingsDaemon.* winglm-swivel winglm-brightness-daemon}"
 # Qt's libraries carry RUNPATH=$ORIGIN (/usr/lib), which musl searches before
 # /etc/ld-musl-aarch64.path: without this Qt would load Alpine's EGL/GBM
 # instead of the KGSL Mesa (mesa-kgsl) that phoc and the apps use.
