@@ -144,11 +144,12 @@ logs into Voce once without the greeter (`... 'sh -s phosh'` back to Phosh).
 | Lock screen | ⚠️ swipe only, no PIN |
 | Apps from the grid | ⚠️ software rendering only (see GPU above); mobile layouts at scale 3, dialogs, closed windows leave the window list; touches mapped to the surface (QtWayland sends them unmapped, `VoceShellSurfaceItem` fixes it). r10: windows can no longer be dragged around, stay maximized, popups/dropdowns are kept on screen (flip/slide by the xdg_positioner rules); grid honours `OnlyShowIn`/`NotShowIn`/`TryExec`, reloads on install, design icons without an app open the organizer/dialer tab or a GNOME Software search |
 | Volume slider, volume keys | r10: PulseAudio (`pactl`), level bar on the keys; PulseAudio now started by the session (autostart) |
-| Calls | r10: GNOME Calls runs in the session (autostart) and handles CS and VoLTE as under Phosh; the shell's call overlay follows it over D-Bus. r12: `voce-dialer` dials through GNOME Calls and shows its history. Not yet tested with a real call |
+| Calls | r10: GNOME Calls runs in the session (autostart) and handles CS and VoLTE as under Phosh; the shell's call overlay follows it over D-Bus. r12: `voce-dialer` dials through GNOME Calls and shows its history. r14: gear menu with call forwarding/barring (network codes over USSD, untested against the network), auto redial, redial; call waiting: the modem answers ModemManager's `CallWaitingQuery` with `QMI protocol error (3): 'Internal'`, so it shows as unsupported. Not yet tested with a real call |
 | SMS | r12: conversations, compose/send through ModemManager, live incoming SMS with notification; receiving and sending not yet tested with real messages |
 | Organizer | r12: alarms (repeat days, snooze, feedbackd sound), timer and calendar reminders work with the window closed; r10/r11 organizer did not start (QML error), fixed in r12 |
 | GNOME Settings | ✅ mobile layout, dark style, no window buttons; Displays page: scale 100–400 % and orientation (0/90/180/270°) applied live and saved (the shell implements `org.gnome.Mutter.DisplayConfig` like Phosh); Night Light not supported |
-| Notifications | ⚠️ the server runs; r10: lock screen entries can be opened/swiped away, the dots clear them all |
+| Notifications | ⚠️ the server runs; r10: lock screen entries can be opened/swiped away, the dots clear them all; r14: source name and icon (voce:* icons from the Voce apps, the .desktop icon for others) on the lock screen and in the banner |
+| Window list | r14: close a window by swiping its card up or down; launching an app whose window is open brings it to the front |
 | On-screen keyboard | ❌ none (hardware QWERTY is the plan; no XKB layout set yet) |
 | Bluetooth / airplane / mobile data toggles | r10: BlueZ `Adapter1.Powered`; airplane = `nmcli radio all` + BlueZ; mobile data = the gsm connection up/down (modem stays on for calls) |
 | Flashlight | r10: `led:torch_0` + `led:switch_0` through logind |
