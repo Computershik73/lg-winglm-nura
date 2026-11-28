@@ -100,16 +100,38 @@ export WMS_AUTOSTART_SKIP="${WMS_AUTOSTART_SKIP-org.gnome.SettingsDaemon.* wingl
 # which then dies without stopping the bus it started; the terminal hangup
 # that follows ends the shell and the apps, but dbus-daemon takes SIGHUP as
 # "reload the configuration". So every session restart left its bus running,
-# with everything activated on it: the first session's gnome-keyring-daemon
-# kept the keyring socket, later sessions had no Secret Service, GNOME Calls
-# no VoLTE password, and winglm-volte-calls restarted Calls in vain.
+# with everything activated on it (portals, at-spi, the keyring daemon).
 # Stop the bus once the shell ($$ after the exec below) is gone. A normal end
 # (log out, crash) is dbus-run-session's job; this covers it being killed.
+#
+# The session's keyring daemon, on this bus. pam_gnome_keyring starts one for
+# every login (base-session auto_start: each ssh login too), and
+# "gnome-keyring-daemon --start" - XDG autostart, D-Bus activation of
+# org.freedesktop.secrets - only passes this bus on to whatever daemon holds
+# $XDG_RUNTIME_DIR/keyring/control. A daemon already on another bus (an old
+# session's, an ssh login's) ignores it: no Secret Service here, GNOME Calls
+# without its VoLTE password. A control directory of this session's own keeps
+# it on this bus; it exits with the bus.
 if [ -n "$OWN_BUS" ]; then
 	BUS_PID=$(gdbus call --session --dest org.freedesktop.DBus \
 		--object-path /org/freedesktop/DBus \
 		--method org.freedesktop.DBus.GetConnectionUnixProcessID \
 		org.freedesktop.DBus 2>/dev/null | sed -n 's/^(uint32 \([0-9]*\),)$/\1/p')
+	KEYRING_DIR=
+	if [ -n "$XDG_RUNTIME_DIR" ]; then
+		KEYRING_DIR="$XDG_RUNTIME_DIR/voce-keyring-$$"
+		mkdir -p -m 700 "$KEYRING_DIR"
+		unset GNOME_KEYRING_CONTROL
+		GNOME_KEYRING_CONTROL=$(gnome-keyring-daemon --start --components=pkcs11,secrets \
+			--control-directory="$KEYRING_DIR" 2>/dev/null | sed -n 's/^GNOME_KEYRING_CONTROL=//p')
+		if [ -n "$GNOME_KEYRING_CONTROL" ]; then
+			export GNOME_KEYRING_CONTROL
+			gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \
+				--method org.freedesktop.DBus.UpdateActivationEnvironment \
+				"{'GNOME_KEYRING_CONTROL': '$GNOME_KEYRING_CONTROL'}" >/dev/null 2>&1
+		fi
+		echo "keyring: ${GNOME_KEYRING_CONTROL:-not started}"
+	fi
 	[ -n "$BUS_PID" ] && (
 		# the hangup reaches this watcher too: from then on look often
 		t=10
@@ -119,6 +141,7 @@ if [ -n "$OWN_BUS" ]; then
 			wait $!
 		done
 		[ "$(cat "/proc/$BUS_PID/comm" 2>/dev/null)" = dbus-daemon ] && kill "$BUS_PID"
+		[ -n "$KEYRING_DIR" ] && rm -rf "$KEYRING_DIR"
 	) </dev/null >/dev/null 2>&1 &
 fi
 
