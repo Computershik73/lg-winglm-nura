@@ -27,9 +27,14 @@ export XDG_SESSION_TYPE=wayland
 export XDG_CURRENT_DESKTOP=Voce:GNOME
 export XDG_SESSION_DESKTOP=voce
 
+# The bus is only ours to stop (see the end) when it is started here, not
+# when the script runs inside another session for a test.
 if [ -z "$DBUS_SESSION_BUS_ADDRESS" ]; then
+	export VOCE_OWN_BUS=1
 	exec dbus-run-session -- "$0" "$@"
 fi
+OWN_BUS=$VOCE_OWN_BUS
+unset VOCE_OWN_BUS
 
 LOGDIR="${XDG_CACHE_HOME:-$HOME/.cache}/voce-shell"
 mkdir -p "$LOGDIR"
@@ -90,5 +95,31 @@ export WMS_AUTOSTART_SKIP="${WMS_AUTOSTART_SKIP-org.gnome.SettingsDaemon.* wingl
 # /etc/ld-musl-aarch64.path: without this Qt would load Alpine's EGL/GBM
 # instead of the KGSL Mesa (mesa-kgsl) that phoc and the apps use.
 [ -d /usr/lib/mesa-kgsl ] && export LD_LIBRARY_PATH="/usr/lib/mesa-kgsl${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+# greetd ends a session with SIGTERM to its first process, dbus-run-session,
+# which then dies without stopping the bus it started; the terminal hangup
+# that follows ends the shell and the apps, but dbus-daemon takes SIGHUP as
+# "reload the configuration". So every session restart left its bus running,
+# with everything activated on it: the first session's gnome-keyring-daemon
+# kept the keyring socket, later sessions had no Secret Service, GNOME Calls
+# no VoLTE password, and winglm-volte-calls restarted Calls in vain.
+# Stop the bus once the shell ($$ after the exec below) is gone. A normal end
+# (log out, crash) is dbus-run-session's job; this covers it being killed.
+if [ -n "$OWN_BUS" ]; then
+	BUS_PID=$(gdbus call --session --dest org.freedesktop.DBus \
+		--object-path /org/freedesktop/DBus \
+		--method org.freedesktop.DBus.GetConnectionUnixProcessID \
+		org.freedesktop.DBus 2>/dev/null | sed -n 's/^(uint32 \([0-9]*\),)$/\1/p')
+	[ -n "$BUS_PID" ] && (
+		# the hangup reaches this watcher too: from then on look often
+		t=10
+		trap 't=0.2' HUP INT TERM
+		while [ -d "/proc/$$" ]; do
+			sleep $t &
+			wait $!
+		done
+		[ "$(cat "/proc/$BUS_PID/comm" 2>/dev/null)" = dbus-daemon ] && kill "$BUS_PID"
+	) </dev/null >/dev/null 2>&1 &
+fi
 
 exec "$SHELL_BIN"

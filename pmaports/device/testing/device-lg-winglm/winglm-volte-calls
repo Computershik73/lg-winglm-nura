@@ -26,24 +26,41 @@ fi
 
 # The gateway checks no password, but Calls refuses an account without one.
 # The session keyring is always unlocked (also with autologin); store it
-# there on every login, before Calls starts.
+# there on every login, before Calls starts. Without a Secret Service on
+# this session's bus each try only times out (25 s): stop at the first.
+stored=
 for proto in sip udp UDP; do
 	printf 'volte' | secret-tool store --collection=session \
 		--label='Calls Password for volte@127.0.0.1' \
 		xdg:schema sm.puri.Calls server 127.0.0.1 username volte \
-		protocol "$proto" 2>/dev/null
+		protocol "$proto" 2>/dev/null || break
+	stored=1
 done
+if [ -z "$stored" ]; then
+	logger -t winglm-volte-calls "no Secret Service on this session bus: Calls has no VoLTE password"
+	exit 0
+fi
 
 # If Calls came up before the password was there it gave up on the account:
-# restart it (D-Bus activation keeps it in this session) once.
+# restart it (D-Bus activation keeps it in this session) once. Only the Calls
+# of this session (the owner of org.gnome.Calls on this bus, not every
+# gnome-calls of the user), and never while it shows a call: CS calls go
+# through it too.
 (
 	sleep 25
-	if pgrep -u "$(id -u)" -x gnome-calls >/dev/null && \
-	   ! grep -qs '^calls=1' /run/winglm-volte/status; then
-		pkill -u "$(id -u)" -x gnome-calls
-		sleep 1
-		gdbus call --session --dest org.gnome.Calls --object-path /org/gnome/Calls \
-			--method org.freedesktop.DBus.Peer.Ping >/dev/null 2>&1
-	fi
+	grep -qs '^calls=1' /run/winglm-volte/status && exit 0
+	pid=$(gdbus call --session --dest org.freedesktop.DBus \
+		--object-path /org/freedesktop/DBus \
+		--method org.freedesktop.DBus.GetConnectionUnixProcessID org.gnome.Calls |
+		sed -n 's/^(uint32 \([0-9]*\),)$/\1/p')
+	[ -n "$pid" ] || exit 0
+	gdbus call --session --dest org.gnome.Calls --object-path /org/gnome/Calls \
+		--method org.freedesktop.DBus.ObjectManager.GetManagedObjects |
+		grep -q 'org\.gnome\.Calls\.Call' && exit 0
+	logger -t winglm-volte-calls "Calls $pid has no VoLTE account: restarting it"
+	kill "$pid"
+	sleep 1
+	gdbus call --session --dest org.gnome.Calls --object-path /org/gnome/Calls \
+		--method org.freedesktop.DBus.Peer.Ping
 ) >/dev/null 2>&1 &
 exit 0
